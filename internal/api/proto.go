@@ -95,11 +95,13 @@ func encodeNewOrderReq(accountID, symbolID int64, side uint32, volume int64, sl,
 	b = appendUint32(b, 5, side)
 	b = appendInt64(b, 6, volume)
 
+	// For MARKET orders, use relativeStopLoss/relativeTakeProfit in units of 1/100000
+	// sl and tp are in pips (0.0001 EUR), convert to 1/100000 units: pips * 10
 	if sl > 0 {
-		b = appendDouble(b, 12, sl) // slDistanceInPips for market orders
+		b = appendInt64(b, 18, int64(sl*10)) // relativeStopLoss
 	}
 	if tp > 0 {
-		b = appendDouble(b, 13, tp) // tpDistanceInPips for market orders
+		b = appendInt64(b, 19, int64(tp*10)) // relativeTakeProfit
 	}
 	return b
 }
