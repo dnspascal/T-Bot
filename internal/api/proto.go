@@ -96,10 +96,10 @@ func encodeNewOrderReq(accountID, symbolID int64, side uint32, volume int64, sl,
 	b = appendInt64(b, 6, volume)
 
 	if sl > 0 {
-		b = appendDouble(b, 10, sl)
+		b = appendDouble(b, 12, sl) // slDistanceInPips for market orders
 	}
 	if tp > 0 {
-		b = appendDouble(b, 11, tp)
+		b = appendDouble(b, 13, tp) // tpDistanceInPips for market orders
 	}
 	return b
 }
