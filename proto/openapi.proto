@@ -1,0 +1,94 @@
+syntax = "proto2";
+
+package openapi;
+
+option go_package = "github.com/denismgaya/t-bot/proto";
+
+// Outer envelope wrapping every message sent/received
+message ProtoMessage {
+  required uint32 payloadType = 1;
+  optional bytes  payload     = 2;
+  optional string clientMsgId = 3;
+}
+
+enum ProtoOAPayloadType {
+  PROTO_OA_APPLICATION_AUTH_REQ  = 2100;
+  PROTO_OA_APPLICATION_AUTH_RES  = 2101;
+  PROTO_OA_ACCOUNT_AUTH_REQ      = 2102;
+  PROTO_OA_ACCOUNT_AUTH_RES      = 2103;
+  PROTO_OA_NEW_ORDER_REQ         = 2106;
+  PROTO_OA_EXECUTION_EVENT       = 2126;
+  PROTO_OA_SUBSCRIBE_SPOTS_REQ   = 2127;
+  PROTO_OA_SUBSCRIBE_SPOTS_RES   = 2128;
+  PROTO_OA_SPOT_EVENT            = 2131;
+  PROTO_OA_ERROR_RES             = 2142;
+}
+
+enum ProtoOAOrderType {
+  MARKET = 1;
+  LIMIT  = 2;
+  STOP   = 3;
+}
+
+enum ProtoOATradeSide {
+  BUY  = 1;
+  SELL = 2;
+}
+
+message ProtoOAApplicationAuthReq {
+  optional uint32 payloadType  = 1 [default = 2100];
+  required string clientId     = 2;
+  required string clientSecret = 3;
+}
+
+message ProtoOAApplicationAuthRes {
+  optional uint32 payloadType = 1 [default = 2101];
+}
+
+message ProtoOAAccountAuthReq {
+  optional uint32 payloadType        = 1 [default = 2102];
+  required int64  ctidTraderAccountId = 2;
+  required string accessToken        = 3;
+}
+
+message ProtoOAAccountAuthRes {
+  optional uint32 payloadType        = 1 [default = 2103];
+  required int64  ctidTraderAccountId = 2;
+}
+
+message ProtoOASubscribeSpotsReq {
+  optional uint32 payloadType        = 1 [default = 2127];
+  required int64  ctidTraderAccountId = 2;
+  repeated int64  symbolId           = 3;
+}
+
+message ProtoOASpotEvent {
+  optional uint32 payloadType        = 1 [default = 2131];
+  required int64  ctidTraderAccountId = 2;
+  required int64  symbolId           = 3;
+  optional uint64 bid                = 4;
+  optional uint64 ask                = 5;
+  optional int64  timestamp          = 8;
+}
+
+message ProtoOANewOrderReq {
+  optional uint32          payloadType        = 1 [default = 2106];
+  required int64           ctidTraderAccountId = 2;
+  required int64           symbolId           = 3;
+  required ProtoOAOrderType orderType         = 4;
+  required ProtoOATradeSide tradeSide         = 5;
+  required int64           volume             = 6;
+  optional double          limitPrice         = 7;
+  optional double          stopPrice          = 8;
+  optional int64           timeInForce        = 9;
+  optional double          stopLoss           = 10;
+  optional double          takeProfit         = 11;
+  optional string          comment            = 14;
+}
+
+message ProtoOAErrorRes {
+  optional uint32 payloadType        = 1 [default = 2142];
+  optional int64  ctidTraderAccountId = 2;
+  required string errorCode          = 3;
+  optional string description        = 4;
+}

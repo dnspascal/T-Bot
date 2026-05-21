@@ -1,0 +1,60 @@
+name: Deploy
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  ci:
+    uses: ./.github/workflows/ci.yml
+
+  deploy:
+    needs: ci
+    runs-on: ubuntu-latest
+    environment: Prod
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Build bot binary
+        run: GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o bot ./cmd/bot
+
+      - name: Build migrate binary
+        run: GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o migrate ./cmd/migrate
+
+      - name: Setup SSH
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keyscan -H ${{ secrets.SERVER_HOST }} >> ~/.ssh/known_hosts
+
+      - name: Copy binaries to server
+        run: |
+          scp -i ~/.ssh/id_ed25519 bot ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/srv/tbot/bot.new
+          scp -i ~/.ssh/id_ed25519 migrate ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/srv/tbot/migrate.new
+
+      - name: Stop bot before migrations
+        run: |
+          ssh -i ~/.ssh/id_ed25519 ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} \
+            "sudo systemctl stop tbot.service"
+
+      - name: Run migrations
+        run: |
+          ssh -i ~/.ssh/id_ed25519 ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} \
+            "cd /srv/tbot && sudo -u tbot /srv/tbot/migrate.new"
+
+      - name: Swap binaries and restart
+        run: |
+          ssh -i ~/.ssh/id_ed25519 ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} "
+            mv /srv/tbot/bot /srv/tbot/bot.old 2>/dev/null || true &&
+            mv /srv/tbot/migrate /srv/tbot/migrate.old 2>/dev/null || true &&
+            mv /srv/tbot/bot.new /srv/tbot/bot &&
+            mv /srv/tbot/migrate.new /srv/tbot/migrate &&
+            sudo systemctl restart tbot.service
+          "
