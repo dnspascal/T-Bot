@@ -32,7 +32,6 @@ type Bot struct {
 	strat        *strategy.CombinedStrategy
 	currentPrice api.PriceEvent
 
-
 	balanceMu sync.Mutex
 	balance   float64
 
@@ -96,7 +95,9 @@ func New(
 
 func (b *Bot) Run(ctx context.Context, startedAt time.Time) {
 	go b.tokenRefresher(ctx)
-	
+
+	b.testOrder()
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -137,9 +138,9 @@ func (b *Bot) onExecution(ctx context.Context, exec api.ExecutionEvent) {
 				"executionPrice", exec.Deal.ExecutionPrice,
 			)
 			b.events.Insert(ctx, "position_opened", map[string]any{
-				"deal_id":    exec.Deal.DealID,
+				"deal_id":     exec.Deal.DealID,
 				"position_id": exec.Deal.PositionID,
-				"price":      exec.Deal.ExecutionPrice,
+				"price":       exec.Deal.ExecutionPrice,
 			}, 0)
 		} else if b.hasOpenPosition {
 			b.hasOpenPosition = false
@@ -425,9 +426,9 @@ func (b *Bot) onTradeSignal(ctx context.Context, dec strategy.Decision, price ap
 		slog.Warn("position size error", "err", err)
 		return
 	}
-	
+
 	if dec.Confluence == strategy.ConfluenceWeak {
-		volume = 100000 
+		volume = 100000
 	}
 
 	var side uint32
@@ -447,15 +448,15 @@ func (b *Bot) onTradeSignal(ctx context.Context, dec strategy.Decision, price ap
 	sentAt := time.Now()
 
 	orderID, err := b.orders.Insert(ctx, order.Order{
-		SignalID:  &signalID,
-		Provider:  "ctrader",
-		Symbol:    b.cfg.Symbol,
-		SymbolID:  b.cfg.SymbolID,
-		Side:      sideStr,
-		Volume:    volume,
-		SL:        &sl,
-		TP:        &tp,
-		SentAt:    &sentAt,
+		SignalID: &signalID,
+		Provider: "ctrader",
+		Symbol:   b.cfg.Symbol,
+		SymbolID: b.cfg.SymbolID,
+		Side:     sideStr,
+		Volume:   volume,
+		SL:       &sl,
+		TP:       &tp,
+		SentAt:   &sentAt,
 	})
 	if err != nil {
 		slog.Error("insert order record failed", "err", err)
@@ -544,4 +545,15 @@ func sideString(sig strategy.Signal) string {
 		return "BUY"
 	}
 	return "SELL"
+}
+
+func (b *Bot) testOrder() {
+
+	if err := b.client.PlaceMarketOrder(api.TradeSideBuy, 100000, 10, 20); err != nil {
+		slog.Error("test order failed", "err", err)
+		return
+	}
+    slog.Info("test order sent successfully")
+	time.Sleep(5 * time.Second)
+
 }
