@@ -92,11 +92,11 @@ func (s *CombinedStrategy) evaluate(c Candle) Decision {
 		dec.Signal = Hold
 		return dec
 	}
-	if emaSig == Buy && rsiVal > 65 {
+	if emaSig == Buy && rsiVal > 70 {
 		dec.Signal = Hold
 		return dec
 	}
-	if emaSig == Sell && rsiVal < 35 {
+	if emaSig == Sell && rsiVal < 30 {
 		dec.Signal = Hold
 		return dec
 	}
@@ -110,12 +110,11 @@ func (s *CombinedStrategy) evaluate(c Candle) Decision {
 	return dec
 }
 
-// isTradingSession returns true during London + New York hours (08:00–22:00 UTC) on weekdays.
 func isTradingSession(t time.Time) bool {
 	utc := t.UTC()
 	if utc.Weekday() == time.Saturday || utc.Weekday() == time.Sunday {
 		return false
 	}
 	h := utc.Hour()
-	return h >= 8 && h < 22
+	return h >= 7 && h < 22
 }
