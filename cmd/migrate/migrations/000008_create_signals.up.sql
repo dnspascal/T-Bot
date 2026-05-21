@@ -2,7 +2,7 @@
 -- Full record means you can replay exactly what the bot was thinking at any moment.
 CREATE TABLE signals (
     id            UUID          NOT NULL DEFAULT gen_random_uuid(),
-    symbol        TEXT          NOT NULL,
+    symbol_id     UUID          NOT NULL REFERENCES symbols(id),
     signal        TEXT          NOT NULL CHECK (signal IN ('BUY', 'SELL', 'HOLD')),
     fast_ema      NUMERIC(12,5) NOT NULL, -- EMA(9)  value at decision time
     slow_ema      NUMERIC(12,5) NOT NULL, -- EMA(21) value at decision time
@@ -16,5 +16,5 @@ CREATE TABLE signals (
 
 SELECT create_hypertable('signals', 'created_at');
 
-CREATE INDEX idx_signals_symbol     ON signals (symbol, created_at DESC);
-CREATE INDEX idx_signals_actionable ON signals (symbol, created_at DESC) WHERE signal != 'HOLD';
+CREATE INDEX idx_signals_symbol     ON signals (symbol_id, created_at DESC);
+CREATE INDEX idx_signals_actionable ON signals (symbol_id, created_at DESC) WHERE signal != 'HOLD';

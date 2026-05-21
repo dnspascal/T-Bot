@@ -2,8 +2,7 @@
 -- Stored per symbol per timeframe period.
 CREATE TABLE candles (
     id          UUID          NOT NULL DEFAULT gen_random_uuid(),
-    symbol      TEXT          NOT NULL,
-    symbol_id   BIGINT        NOT NULL,
+    symbol_id   UUID          NOT NULL REFERENCES symbols(id),
     period      TEXT          NOT NULL, -- M1 M5 M15 M30 H1 H4 D1 W1 MN1
     open        NUMERIC(12,5) NOT NULL,
     high        NUMERIC(12,5) NOT NULL,
@@ -17,5 +16,5 @@ CREATE TABLE candles (
 
 SELECT create_hypertable('candles', 'bar_time');
 
-CREATE UNIQUE INDEX idx_candles_unique   ON candles (symbol, period, bar_time); -- bar_time is partition col ✓
-CREATE        INDEX idx_candles_symbol   ON candles (symbol, period, bar_time DESC);
+CREATE UNIQUE INDEX idx_candles_unique   ON candles (symbol_id, period, bar_time); -- bar_time is partition col ✓
+CREATE        INDEX idx_candles_symbol   ON candles (symbol_id, period, bar_time DESC);

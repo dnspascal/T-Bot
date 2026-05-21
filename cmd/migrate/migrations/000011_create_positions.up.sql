@@ -6,8 +6,7 @@ CREATE TABLE positions (
     provider             TEXT          NOT NULL DEFAULT 'ctrader', -- ctrader | oanda | ib | mt5
     provider_position_id TEXT          NOT NULL,   -- provider's own position identifier
     provider_acct_id     TEXT          NOT NULL,   -- provider's own account identifier
-    symbol_id            BIGINT        NOT NULL,
-    symbol               TEXT          NOT NULL,
+    symbol_id            UUID          NOT NULL REFERENCES symbols(id),
     side                 TEXT          NOT NULL CHECK (side IN ('BUY', 'SELL')),
     volume               BIGINT        NOT NULL,   -- in provider units (e.g. cTrader: 100 = 0.01 lots)
 
@@ -39,5 +38,5 @@ CREATE TABLE positions (
 );
 
 CREATE INDEX idx_positions_status      ON positions (status) WHERE status = 'open';
-CREATE INDEX idx_positions_symbol      ON positions (symbol, created_at DESC);
+CREATE INDEX idx_positions_symbol_id   ON positions (symbol_id, created_at DESC);
 CREATE INDEX idx_positions_provider_id ON positions (provider, provider_position_id);

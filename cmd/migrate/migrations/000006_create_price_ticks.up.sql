@@ -1,11 +1,8 @@
 CREATE EXTENSION IF NOT EXISTS timescaledb;
 
--- Every raw price quote received from the broker.
--- bid and ask are stored; mid and spread are derived automatically.
 CREATE TABLE price_ticks (
     id               UUID          NOT NULL DEFAULT gen_random_uuid(),
-    symbol           TEXT          NOT NULL,
-    symbol_id        BIGINT        NOT NULL,
+    symbol_id        UUID          NOT NULL REFERENCES symbols(id),
     bid              NUMERIC(12,5) NOT NULL,
     ask              NUMERIC(12,5) NOT NULL,
     mid              NUMERIC(12,5) NOT NULL GENERATED ALWAYS AS ((bid + ask) / 2) STORED,
@@ -19,4 +16,4 @@ CREATE TABLE price_ticks (
 
 SELECT create_hypertable('price_ticks', 'received_at');
 
-CREATE INDEX idx_price_ticks_symbol ON price_ticks (symbol, received_at DESC);
+CREATE INDEX idx_price_ticks_symbol_id ON price_ticks (symbol_id, received_at DESC);
