@@ -435,12 +435,12 @@ func (b *Bot) onTradeSignal(ctx context.Context, dec strategy.Decision, price ap
 
 	if dec.Signal == strategy.Buy {
 		side = api.TradeSideBuy
-		sl = price.Ask - b.cfg.StopLossPips*pipSize
-		tp = price.Ask + b.cfg.TakeProfitPips*pipSize
+		sl = b.cfg.StopLossPips
+		tp = b.cfg.TakeProfitPips
 	} else {
 		side = api.TradeSideSell
-		sl = price.Bid + b.cfg.StopLossPips*pipSize
-		tp = price.Bid - b.cfg.TakeProfitPips*pipSize
+		sl = b.cfg.StopLossPips
+		tp = b.cfg.TakeProfitPips
 	}
 
 	sideStr := sideString(dec.Signal)
