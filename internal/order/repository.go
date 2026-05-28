@@ -18,12 +18,12 @@ func New(db *pgxpool.Pool) *Repository {
 
 func (r *Repository) Insert(ctx context.Context, o Order) (string, error) {
 	const q = `
-		INSERT INTO orders (signal_id, provider, symbol, symbol_id, side, volume, sl, tp, sent_at, status)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'pending')
+		INSERT INTO orders (signal_id, provider, symbol_id, side, volume, sl, tp, sent_at, status)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'pending')
 		RETURNING id`
 	var id string
 	err := r.db.QueryRow(ctx, q,
-		o.SignalID, o.Provider, o.Symbol, o.SymbolID, o.Side, o.Volume, o.SL, o.TP, o.SentAt,
+		o.SignalID, o.Provider, o.SymbolID, o.Side, o.Volume, o.SL, o.TP, o.SentAt,
 	).Scan(&id)
 	if err != nil {
 		return "", fmt.Errorf("order.Insert: %w", err)

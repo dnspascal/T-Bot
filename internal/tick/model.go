@@ -4,8 +4,7 @@ import "time"
 
 type Tick struct {
 	ID                string
-	Symbol            string
-	SymbolID          int64
+	SymbolID          string
 	Bid               float64
 	Ask               float64
 	Mid               float64

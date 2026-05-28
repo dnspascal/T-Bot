@@ -10,8 +10,7 @@ type Fill struct {
 	ProviderFillID     string
 	ProviderOrderID    *string
 	ProviderPositionID *string
-	SymbolID           int64
-	Symbol             string
+	SymbolID           string
 	Side               string
 	Volume             *int64
 	FilledVolume       *int64

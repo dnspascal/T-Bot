@@ -8,8 +8,7 @@ type Position struct {
 	Provider           string
 	ProviderPositionID string
 	ProviderAcctID     string
-	SymbolID           int64
-	Symbol             string
+	SymbolID           string
 	Side               string // BUY | SELL
 	Volume             int64
 	OpenPrice          *float64

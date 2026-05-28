@@ -8,8 +8,7 @@ type Order struct {
 	Provider            string
 	ProviderOrderID     *string
 	ProviderPositionID  *string
-	Symbol              string
-	SymbolID            int64
+	SymbolID            string
 	Side                string // BUY | SELL
 	Volume              int64
 	SL                  *float64

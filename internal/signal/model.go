@@ -4,7 +4,7 @@ import "time"
 
 type Signal struct {
 	ID           string
-	Symbol       string
+	SymbolID     string
 	Signal       string // BUY | SELL | HOLD
 	FastEMA      float64
 	SlowEMA      float64
