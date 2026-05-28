@@ -24,6 +24,7 @@ import (
 	"github.com/denismgaya/t-bot/internal/signal"
 	"github.com/denismgaya/t-bot/internal/snapshot"
 	"github.com/denismgaya/t-bot/internal/strategy"
+	"github.com/denismgaya/t-bot/internal/symbol"
 	"github.com/denismgaya/t-bot/internal/tick"
 )
 
@@ -46,6 +47,17 @@ func main() {
 	}
 	defer pool.Close()
 
+	lookup, err := symbol.LoadLookup(ctx, pool, []string{cfg.Symbol})
+	if err != nil {
+		log.Fatal("load symbol lookup:", err)
+	}
+	symbolUUID, err := lookup.Get(cfg.Symbol)
+	if err != nil {
+		log.Fatal("get symbol uuid:", err)
+	}
+	cfg.SymbolUUID = symbolUUID
+	slog.Info("loaded symbol lookup", "symbol", cfg.Symbol, "symbolId", symbolUUID)
+
 	ticks     := tick.New(pool)
 	candles   := candle.New(pool)
 	signals   := signal.New(pool)
@@ -65,7 +77,7 @@ func main() {
 	}, 0)
 
 	// Restore daily P&L so risk manager survives restarts
-	todayLoss, err := pnls.Today(ctx, cfg.Symbol)
+	todayLoss, err := pnls.Today(ctx, cfg.SymbolUUID)
 	if err != nil {
 		log.Fatal("load daily pnl:", err)
 	}
@@ -188,8 +200,7 @@ func main() {
 		for i, bar := range historicalBars {
 			closePrices[i] = bar.Close
 			candles.Upsert(ctx, candle.Candle{
-				Symbol:     cfg.Symbol,
-				SymbolID:   cfg.SymbolID,
+				SymbolID:   cfg.SymbolUUID,
 				Period:     "M5",
 				Open:       bar.Open,
 				High:       bar.High,
@@ -219,7 +230,7 @@ func main() {
 		"startupMs", elapsed(botStart),
 	)
 
-	bot.New(cfg, client, pool, riskMgr, strat, balance, hasOpenPosition, ticks, candles, signals, orders, fills, positions, pnls, events).Run(ctx, botStart)
+	bot.New(cfg, client, pool, riskMgr, strat, balance, hasOpenPosition, lookup, ticks, candles, signals, orders, fills, positions, pnls, events).Run(ctx, botStart)
 }
 
 func elapsed(t time.Time) int64 {

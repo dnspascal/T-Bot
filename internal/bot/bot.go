@@ -19,6 +19,7 @@ import (
 	"github.com/denismgaya/t-bot/internal/risk"
 	"github.com/denismgaya/t-bot/internal/signal"
 	"github.com/denismgaya/t-bot/internal/strategy"
+	"github.com/denismgaya/t-bot/internal/symbol"
 	"github.com/denismgaya/t-bot/internal/tick"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -46,7 +47,8 @@ type Bot struct {
 	lastCandleOpenTime int64
 	lastBar            api.Trendbar
 
-	db        *pgxpool.Pool
+	db     *pgxpool.Pool
+	lookup *symbol.SymbolLookup
 	ticks     *tick.Repository
 	candles   *candle.Repository
 	signals   *signal.Repository
@@ -65,6 +67,7 @@ func New(
 	strat *strategy.CombinedStrategy,
 	balance float64,
 	hasOpenPosition bool,
+	lookup *symbol.SymbolLookup,
 	ticks *tick.Repository,
 	candles *candle.Repository,
 	signals *signal.Repository,
@@ -82,6 +85,7 @@ func New(
 		strat:           strat,
 		balance:         balance,
 		hasOpenPosition: hasOpenPosition,
+		lookup:          lookup,
 		ticks:           ticks,
 		candles:         candles,
 		signals:         signals,
@@ -195,8 +199,7 @@ func (b *Bot) recordOpenFill(ctx context.Context, exec api.ExecutionEvent) {
 		Provider:           "ctrader",
 		ProviderPositionID: provPosID,
 		ProviderAcctID:     fmt.Sprintf("%d", b.cfg.AccountID),
-		SymbolID:           b.cfg.SymbolID,
-		Symbol:             b.cfg.Symbol,
+		SymbolID:           b.cfg.SymbolUUID,
 		Side:               b.pendingSide,
 		Volume:             deal.FilledVolume,
 		OpenPrice:          &deal.ExecutionPrice,
@@ -215,8 +218,7 @@ func (b *Bot) recordOpenFill(ctx context.Context, exec api.ExecutionEvent) {
 		ProviderFillID:     fmt.Sprintf("%d", deal.DealID),
 		ProviderOrderID:    &provOrderID,
 		ProviderPositionID: &provPosID,
-		SymbolID:           b.cfg.SymbolID,
-		Symbol:             b.cfg.Symbol,
+		SymbolID:           b.cfg.SymbolUUID,
 		Side:               b.pendingSide,
 		Volume:             &volume,
 		FilledVolume:       &filledVolume,
@@ -266,8 +268,7 @@ func (b *Bot) recordCloseFill(ctx context.Context, exec api.ExecutionEvent) {
 		ProviderFillID:     fmt.Sprintf("%d", deal.DealID),
 		ProviderOrderID:    &provOrderID,
 		ProviderPositionID: &provPosID,
-		SymbolID:           b.cfg.SymbolID,
-		Symbol:             b.cfg.Symbol,
+		SymbolID:           b.cfg.SymbolUUID,
 		Side:               closeSide,
 		Volume:             &volume,
 		FilledVolume:       &filledVolume,
@@ -290,7 +291,7 @@ func (b *Bot) recordCloseFill(ctx context.Context, exec api.ExecutionEvent) {
 
 	realized := cl.GrossProfit + cl.Commission + cl.Swap
 	isWin := realized > 0
-	if err := b.pnls.Upsert(ctx, b.cfg.Symbol, realized, cl.GrossProfit, cl.Commission, cl.Swap, isWin, 0, 0); err != nil {
+	if err := b.pnls.Upsert(ctx, b.cfg.SymbolUUID, realized, cl.GrossProfit, cl.Commission, cl.Swap, isWin, 0, 0); err != nil {
 		slog.Error("pnls.Upsert failed", "err", err)
 	}
 
@@ -323,8 +324,7 @@ func (b *Bot) getBalance() float64 {
 
 func (b *Bot) onTick(ctx context.Context, price api.PriceEvent) {
 	b.ticks.Insert(ctx, tick.Tick{
-		Symbol:       b.cfg.Symbol,
-		SymbolID:     b.cfg.SymbolID,
+		SymbolID:     b.cfg.SymbolUUID,
 		Bid:          price.Bid,
 		Ask:          price.Ask,
 		ReceivedAt:   price.Timestamp,
@@ -358,8 +358,7 @@ func (b *Bot) processCandleClose(ctx context.Context, bar api.Trendbar) {
 
 func (b *Bot) onCandle(ctx context.Context, dec strategy.Decision, price api.PriceEvent, processingMs int64) {
 	b.candles.Upsert(ctx, candle.Candle{
-		Symbol:     b.cfg.Symbol,
-		SymbolID:   b.cfg.SymbolID,
+		SymbolID:   b.cfg.SymbolUUID,
 		Period:     "M5",
 		Open:       dec.Candle.Open,
 		High:       dec.Candle.High,
@@ -370,7 +369,7 @@ func (b *Bot) onCandle(ctx context.Context, dec strategy.Decision, price api.Pri
 	})
 
 	signalID, err := b.signals.Insert(ctx, signal.Signal{
-		Symbol:       b.cfg.Symbol,
+		SymbolID:     b.cfg.SymbolUUID,
 		Signal:       dec.Signal.String(),
 		FastEMA:      dec.FastEMA,
 		SlowEMA:      dec.SlowEMA,
@@ -450,8 +449,7 @@ func (b *Bot) onTradeSignal(ctx context.Context, dec strategy.Decision, price ap
 	orderID, err := b.orders.Insert(ctx, order.Order{
 		SignalID: &signalID,
 		Provider: "ctrader",
-		Symbol:   b.cfg.Symbol,
-		SymbolID: b.cfg.SymbolID,
+		SymbolID: b.cfg.SymbolUUID,
 		Side:     sideStr,
 		Volume:   volume,
 		SL:       &sl,

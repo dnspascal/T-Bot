@@ -4,8 +4,7 @@ import "time"
 
 type Candle struct {
 	ID         string
-	Symbol     string
-	SymbolID   int64
+	SymbolID   string
 	Period     string // M1 M5 M15 M30 H1 H4 D1 W1 MN1
 	Open       float64
 	High       float64

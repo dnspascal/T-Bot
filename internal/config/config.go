@@ -26,7 +26,8 @@ type Config struct {
 
 	// Strategy settings
 	Symbol         string
-	SymbolID       int64
+	SymbolID       int64  // cTrader exchange symbol ID
+	SymbolUUID     string // database symbol UUID
 	StopLossPips   float64
 	TakeProfitPips float64
 }
@@ -43,6 +44,8 @@ func Load() (*Config, error) {
 	if err != nil {
 		return nil, fmt.Errorf("CTRADER_SYMBOL_ID must be a number: %w", err)
 	}
+
+	symbolUUID := getEnv("CTRADER_SYMBOL_UUID", "")
 
 	initialBalance, err := strconv.ParseFloat(getEnv("INITIAL_BALANCE", "200.0"), 64)
 	if err != nil {
@@ -82,6 +85,7 @@ func Load() (*Config, error) {
 		MaxDailyLoss:   maxDailyLoss,
 		Symbol:         getEnv("SYMBOL", "EURUSD"),
 		SymbolID:       symbolID,
+		SymbolUUID:     symbolUUID,
 		StopLossPips:   stopLossPips,
 		TakeProfitPips: takeProfitPips,
 	}, nil
