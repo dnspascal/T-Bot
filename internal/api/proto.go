@@ -180,6 +180,7 @@ func encodeGetTrendbarsReq(accountID, symbolID int64, period uint32, toMs int64,
 // Trendbar is a completed OHLC candle from cTrader.
 type Trendbar struct {
 	OpenTime  int64   // Unix seconds (utcTimestampInMinutes * 60)
+	Period    uint32  // 5=M5, 9=H1, 10=H4, 11=D1, etc.
 	Open      float64
 	High      float64
 	Low       float64
@@ -245,13 +246,13 @@ func decodeTrendbar(data []byte) (Trendbar, bool) {
 			i = skipField(data, i, wire)
 		}
 	}
-	_ = period // retained for filtering in callers
 	if low == 0 && tsMinutes == 0 {
 		return Trendbar{}, false
 	}
 	lowF := float64(low) / divisor
 	return Trendbar{
 		OpenTime: int64(tsMinutes) * 60,
+		Period:   uint32(period),  // 5=M5, 9=H1, 10=H4, 11=D1
 		Open:     lowF + float64(deltaOpen)/divisor,
 		High:     lowF + float64(deltaHigh)/divisor,
 		Low:      lowF,

@@ -17,6 +17,7 @@ import (
 	"github.com/denismgaya/t-bot/internal/database"
 	"github.com/denismgaya/t-bot/internal/event"
 	"github.com/denismgaya/t-bot/internal/fill"
+	"github.com/denismgaya/t-bot/internal/marketstate"
 	"github.com/denismgaya/t-bot/internal/order"
 	"github.com/denismgaya/t-bot/internal/pnl"
 	"github.com/denismgaya/t-bot/internal/position"
@@ -76,7 +77,6 @@ func main() {
 		"mode":   cfg.Mode(),
 	}, 0)
 
-	// Restore daily P&L so risk manager survives restarts
 	todayLoss, err := pnls.Today(ctx, cfg.SymbolUUID)
 	if err != nil {
 		log.Fatal("load daily pnl:", err)
@@ -89,7 +89,6 @@ func main() {
 
 	strat := strategy.NewCombinedStrategy(9, 21, 14)
 
-	// Load persisted tokens from DB (overrides .env after first refresh)
 	if token, err := bot.LoadCredential(ctx, pool, "ctrader_access_token"); err == nil && token != "" {
 		cfg.AccessToken = token
 		slog.Info("loaded cTrader access token from DB")
@@ -98,7 +97,6 @@ func main() {
 		cfg.RefreshToken = token
 	}
 
-	// Connect to cTrader
 	connectStart := time.Now()
 	client := api.NewClient(cfg.Demo, cfg.AccountID, cfg.SymbolID)
 
@@ -115,7 +113,6 @@ func main() {
 	}
 	time.Sleep(2 * time.Second)
 
-	// Discover ctidTraderAccountId — this is cTrader's internal ID, different from the broker account number.
 	accounts, err := client.GetAccountList(cfg.AccessToken)
 	if err != nil {
 		log.Fatal("get account list:", err)
@@ -144,7 +141,6 @@ func main() {
 	events.Insert(ctx, "auth_ok", map[string]any{"account_id": cfg.AccountID}, elapsed(authStart))
 	time.Sleep(2 * time.Second)
 
-	// Fetch real account balance and snapshot it
 	fetchStart := time.Now()
 	traderInfo, err := client.FetchAccountInfo()
 	if err != nil {
@@ -170,13 +166,11 @@ func main() {
 		"broker":   brokerName,
 	}, elapsed(fetchStart))
 
-	// Reconcile: discover any positions already open from before a restart
 	reconcileStart := time.Now()
 	openPositions, err := client.Reconcile()
 	if err != nil {
 		log.Fatal("reconcile:", err)
 	}
-	// check if any open position exists for our symbol specifically
 	var hasOpenPosition bool
 	for _, pos := range openPositions {
 		if pos.SymbolID == cfg.SymbolID {
@@ -190,9 +184,8 @@ func main() {
 		"has_open_position": hasOpenPosition,
 	}, elapsed(reconcileStart))
 
-	// Warm up EMA + RSI from cTrader historical trendbars (50 × M5 candles ≈ 4 hours)
 	warmupStart := time.Now()
-	historicalBars, err := client.FetchHistoricalTrendbars(50)
+	historicalBars, err := client.FetchHistoricalTrendbars(api.PeriodM5, 50)
 	if err != nil {
 		slog.Warn("warmup fetch failed, starting cold", "err", err)
 	} else {
@@ -218,9 +211,51 @@ func main() {
 	if err := client.SubscribeSpots(); err != nil {
 		log.Fatal("subscribe spots:", err)
 	}
-	if err := client.SubscribeLiveTrendbar(); err != nil {
-		log.Fatal("subscribe live trendbar:", err)
+
+	tradingPeriods := []struct {
+		code   uint32
+		name   string
+	}{
+		{api.PeriodM5, "M5"},
+		{api.PeriodM15, "M15"},
+		{api.PeriodM30, "M30"},
+		{api.PeriodH1, "H1"},
+		{api.PeriodH4, "H4"},
+		{api.PeriodD1, "D1"},
 	}
+
+	var periodNames []string
+	for _, p := range tradingPeriods {
+		if err := client.SubscribeLiveTrendbar(p.code); err != nil {
+			log.Fatal("subscribe live trendbar:", err)
+		}
+		periodNames = append(periodNames, p.name)
+	}
+	slog.Info("subscribed to live trendbar", "periods", periodNames)
+
+	msRepo := marketstate.NewPostgresRepository(pool)
+
+	warmerStart := time.Now()
+	warmer := marketstate.NewWarmer(client, msRepo, "ctrader", 50)
+	if err := warmer.WarmupAllTimeframes(ctx, cfg.SymbolUUID); err != nil {
+		slog.Warn("warmup failed", "err", err)
+		// Continue anyway - we'll calculate live indicators as candles arrive
+	}
+	slog.Info("warmup complete", "elapsedMs", elapsed(warmerStart))
+
+	// Create processor manager for live market state calculation
+	processorMgr := marketstate.NewProcessorManager(cfg.SymbolUUID, "ctrader", msRepo)
+
+	// Create a processor for each trading timeframe
+	for _, p := range tradingPeriods {
+		// Memory buffer maintains sliding window of last 21 candles
+		buf := marketstate.NewMemoryCandleBuffer(21)
+		// Load recent candles from database for the buffer
+		// (in production, this would load recent state from market_states table)
+		proc := marketstate.NewProcessor(cfg.SymbolUUID, "ctrader", p.name, buf, msRepo)
+		processorMgr.AddProcessor(p.name, proc)
+	}
+	slog.Info("market state processors initialized", "timeframes", len(tradingPeriods))
 
 	slog.Info("bot running",
 		"symbol", cfg.Symbol,
@@ -230,7 +265,7 @@ func main() {
 		"startupMs", elapsed(botStart),
 	)
 
-	bot.New(cfg, client, pool, riskMgr, strat, balance, hasOpenPosition, lookup, ticks, candles, signals, orders, fills, positions, pnls, events).Run(ctx, botStart)
+	bot.New(cfg, client, pool, riskMgr, strat, balance, hasOpenPosition, lookup, ticks, candles, signals, orders, fills, positions, pnls, events, processorMgr).Run(ctx, botStart)
 }
 
 func elapsed(t time.Time) int64 {

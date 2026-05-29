@@ -1,5 +1,3 @@
--- OHLCV candle data sent by the broker inside spot events (ProtoOATrendbar).
--- Stored per symbol per timeframe period.
 CREATE TABLE candles (
     id          UUID          NOT NULL DEFAULT gen_random_uuid(),
     symbol_id   UUID          NOT NULL REFERENCES symbols(id),

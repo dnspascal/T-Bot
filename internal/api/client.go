@@ -129,15 +129,15 @@ func (c *Client) SubscribeSpots() error {
 }
 
 
-func (c *Client) SubscribeLiveTrendbar() error {
+func (c *Client) SubscribeLiveTrendbar(period uint32) error {
 	return c.conn.SendRaw(ProtoOASubscribeLiveTrendbarReq,
-		encodeSubscribeLiveTrendbarReq(c.accountID, c.symbolID, PeriodM5))
+		encodeSubscribeLiveTrendbarReq(c.accountID, c.symbolID, period))
 }
 
 
-func (c *Client) FetchHistoricalTrendbars(count int) ([]Trendbar, error) {
+func (c *Client) FetchHistoricalTrendbars(period uint32, count int) ([]Trendbar, error) {
 	if err := c.conn.SendRaw(ProtoOAGetTrendbarsReq,
-		encodeGetTrendbarsReq(c.accountID, c.symbolID, PeriodM5, time.Now().UnixMilli(), uint32(count))); err != nil {
+		encodeGetTrendbarsReq(c.accountID, c.symbolID, period, time.Now().UnixMilli(), uint32(count))); err != nil {
 		return nil, fmt.Errorf("FetchHistoricalTrendbars send: %w", err)
 	}
 	select {

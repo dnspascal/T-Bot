@@ -13,6 +13,8 @@ import (
 	"github.com/denismgaya/t-bot/internal/config"
 	"github.com/denismgaya/t-bot/internal/event"
 	"github.com/denismgaya/t-bot/internal/fill"
+	"github.com/denismgaya/t-bot/internal/indicator"
+	"github.com/denismgaya/t-bot/internal/marketstate"
 	"github.com/denismgaya/t-bot/internal/order"
 	"github.com/denismgaya/t-bot/internal/pnl"
 	"github.com/denismgaya/t-bot/internal/position"
@@ -57,6 +59,10 @@ type Bot struct {
 	positions *position.Repository
 	pnls      *pnl.Repository
 	events    *event.Repository
+
+	// Market state processing (multi-timeframe indicators)
+	processorMgr *marketstate.ProcessorManager
+	marketStates map[string]indicator.MarketState  // Current state per timeframe
 }
 
 func New(
@@ -76,6 +82,7 @@ func New(
 	positions *position.Repository,
 	pnls *pnl.Repository,
 	events *event.Repository,
+	processorMgr *marketstate.ProcessorManager,
 ) *Bot {
 	return &Bot{
 		cfg:             cfg,
@@ -94,6 +101,8 @@ func New(
 		positions:       positions,
 		pnls:            pnls,
 		events:          events,
+		processorMgr:    processorMgr,
+		marketStates:    make(map[string]indicator.MarketState),
 	}
 }
 
@@ -334,48 +343,83 @@ func (b *Bot) onTick(ctx context.Context, price api.PriceEvent) {
 }
 
 func (b *Bot) onTrendbar(ctx context.Context, bar api.Trendbar) {
-	if bar.OpenTime != b.lastCandleOpenTime {
-		if b.lastCandleOpenTime != 0 {
-			b.processCandleClose(ctx, b.lastBar)
+	period := api.PeriodToString(bar.Period)
+
+	// Store raw candle in candles table
+	b.storeCandle(ctx, bar, period)
+
+	// Calculate and store market state for all timeframes
+	states, err := b.processorMgr.ProcessCandle(ctx, bar)
+	if err != nil {
+		slog.Error("failed to process candle", "period", period, "err", err)
+	} else {
+		// Store current market states (M5, H1, H4, etc.)
+		for periodKey, state := range states {
+			b.marketStates[periodKey] = state
 		}
-		b.lastCandleOpenTime = bar.OpenTime
 	}
-	b.lastBar = bar
+
+	// Only process M5 candles for signal generation
+	if bar.Period == api.PeriodM5 {
+		if bar.OpenTime != b.lastCandleOpenTime {
+			if b.lastCandleOpenTime != 0 {
+				b.processCandleClose(ctx, b.lastBar)
+			}
+			b.lastCandleOpenTime = bar.OpenTime
+		}
+		b.lastBar = bar
+	}
 }
 
 func (b *Bot) processCandleClose(ctx context.Context, bar api.Trendbar) {
 	candleReceived := time.Now()
-	c := strategy.Candle{
-		OpenTime: time.Unix(bar.OpenTime, 0).UTC(),
-		Open:     bar.Open,
-		High:     bar.High,
-		Low:      bar.Low,
-		Close:    bar.Close,
+
+	// Get current M5 market state
+	m5State, ok := b.marketStates["M5"]
+	if !ok {
+		slog.Warn("M5 market state not available yet")
+		return
 	}
-	dec := b.strat.AddCandle(c)
-	b.onCandle(ctx, dec, b.currentPrice, ms(candleReceived))
+
+	// Check if we have enough data to trade
+	if !b.processorMgr.AllWarmedUp() {
+		slog.Info("warming up indicators", "warmed", false)
+		return
+	}
+
+	// Use market state for signal generation
+	b.onCandle(ctx, m5State, b.currentPrice, ms(candleReceived))
 }
 
-func (b *Bot) onCandle(ctx context.Context, dec strategy.Decision, price api.PriceEvent, processingMs int64) {
-	b.candles.Upsert(ctx, candle.Candle{
-		SymbolID:   b.cfg.SymbolUUID,
-		Period:     "M5",
-		Open:       dec.Candle.Open,
-		High:       dec.Candle.High,
-		Low:        dec.Candle.Low,
-		Close:      dec.Candle.Close,
-		BarTime:    dec.Candle.OpenTime,
-		ReceivedAt: time.Now(),
-	})
+// generateSignalFromMarketState creates a trading signal from market state indicators
+func (b *Bot) generateSignalFromMarketState(state indicator.MarketState) string {
+	// For now: simple EMA crossover logic
+	// In future: add multi-timeframe confluence, RSI filters, etc.
 
+	if state.EMAFast > state.EMASlow && state.RSI > 50 {
+		// Potential BUY: fast EMA above slow, RSI confirms
+		return "BUY"
+	}
+	if state.EMAFast < state.EMASlow && state.RSI < 50 {
+		// Potential SELL: fast EMA below slow, RSI confirms
+		return "SELL"
+	}
+	return "HOLD"
+}
+
+func (b *Bot) onCandle(ctx context.Context, state indicator.MarketState, price api.PriceEvent, processingMs int64) {
+	// Generate trading signal from market state
+	sig := b.generateSignalFromMarketState(state)
+
+	// Store signal with indicator values
 	signalID, err := b.signals.Insert(ctx, signal.Signal{
 		SymbolID:     b.cfg.SymbolUUID,
-		Signal:       dec.Signal.String(),
-		FastEMA:      dec.FastEMA,
-		SlowEMA:      dec.SlowEMA,
-		RSI:          dec.RSI,
-		Confluence:   int(dec.Confluence),
-		PriceMid:     dec.Candle.Close,
+		Signal:       sig,
+		FastEMA:      state.EMAFast,
+		SlowEMA:      state.EMASlow,
+		RSI:          state.RSI,
+		Confluence:   0,  // Will calculate multi-timeframe confluence in future
+		PriceMid:     state.Close,
 		ProcessingMs: processingMs,
 	})
 	if err != nil {
@@ -383,20 +427,47 @@ func (b *Bot) onCandle(ctx context.Context, dec strategy.Decision, price api.Pri
 	}
 
 	slog.Info("candle closed",
-		"signal", dec.Signal.String(),
-		"confluence", dec.Confluence,
-		"fastEMA", fmt.Sprintf("%.5f", dec.FastEMA),
-		"slowEMA", fmt.Sprintf("%.5f", dec.SlowEMA),
-		"rsi", fmt.Sprintf("%.2f", dec.RSI),
-		"inSession", dec.InSession,
-		"candleClose", dec.Candle.Close,
+		"signal", sig,
+		"fastEMA", fmt.Sprintf("%.5f", state.EMAFast),
+		"slowEMA", fmt.Sprintf("%.5f", state.EMASlow),
+		"rsi", fmt.Sprintf("%.2f", state.RSI),
+		"adx", fmt.Sprintf("%.2f", state.ADX),
+		"atr", fmt.Sprintf("%.5f", state.ATR),
+		"candleClose", state.Close,
 	)
 
-	if dec.Signal == strategy.Hold {
+	if sig == "HOLD" {
 		return
 	}
 
+	// Create a minimal Decision for onTradeSignal (temporary bridge)
+	dec := strategy.Decision{
+		Signal:   strategy.Buy,
+		FastEMA: state.EMAFast,
+		SlowEMA: state.EMASlow,
+		RSI:     state.RSI,
+	}
+	if sig == "SELL" {
+		dec.Signal = strategy.Sell
+	}
+
 	b.onTradeSignal(ctx, dec, price, signalID)
+}
+
+func (b *Bot) storeCandle(ctx context.Context, bar api.Trendbar, period string) {
+	if err := b.candles.Upsert(ctx, candle.Candle{
+		SymbolID:   b.cfg.SymbolUUID,
+		Period:     period,
+		Open:       bar.Open,
+		High:       bar.High,
+		Low:        bar.Low,
+		Close:      bar.Close,
+		TickVolume: bar.Volume,
+		BarTime:    time.Unix(bar.OpenTime, 0).UTC(),
+		ReceivedAt: time.Now(),
+	}); err != nil {
+		slog.Error("store candle failed", "period", period, "err", err)
+	}
 }
 
 func (b *Bot) onTradeSignal(ctx context.Context, dec strategy.Decision, price api.PriceEvent, signalID string) {

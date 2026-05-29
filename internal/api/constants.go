@@ -29,8 +29,52 @@ const (
 	TradeSideBuy  = uint32(1)
 	TradeSideSell = uint32(2)
 
-	// ProtoOATrendbarPeriod enum values (M1=1, M2=2, M3=3, M4=4, M5=5, M10=6, M15=7, M30=8, H1=9)
+	// ProtoOATrendbarPeriod enum values
+	PeriodM1  = uint32(1)
+	PeriodM2  = uint32(2)
+	PeriodM3  = uint32(3)
+	PeriodM4  = uint32(4)
 	PeriodM5  = uint32(5)
+	PeriodM10 = uint32(6)
 	PeriodM15 = uint32(7)
+	PeriodM30 = uint32(8)
 	PeriodH1  = uint32(9)
+	PeriodH4  = uint32(10)
+	PeriodD1  = uint32(11)
+	PeriodW1  = uint32(12)
+	PeriodMN1 = uint32(13)
 )
+
+// PeriodToString converts period enum value to string
+func PeriodToString(period uint32) string {
+	switch period {
+	case PeriodM1:
+		return "M1"
+	case PeriodM2:
+		return "M2"
+	case PeriodM3:
+		return "M3"
+	case PeriodM4:
+		return "M4"
+	case PeriodM5:
+		return "M5"
+	case PeriodM10:
+		return "M10"
+	case PeriodM15:
+		return "M15"  // 15 min
+	case PeriodM30:
+		return "M30"  // 30 min
+	case PeriodH1:
+		return "H1"
+	case PeriodH4:
+		return "H4"
+	case PeriodD1:
+		return "D1"
+	case PeriodW1:
+		return "W1"
+	case PeriodMN1:
+		return "MN1"
+	default:
+		return "UNKNOWN"
+	}
+}
