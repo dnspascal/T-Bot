@@ -1,12 +1,9 @@
 package main
 
 import (
-	"context"
 	"fmt"
 	"log"
 	"log/slog"
-	ossignal "os/signal"
-	"syscall"
 	"time"
 
 	"github.com/denismgaya/t-bot/internal/api"
@@ -35,7 +32,7 @@ func main() {
 		log.Fatal(err)
 	}
 
-	ctx, cancel := ossignal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	ctx, cancel := setupGracefulShutdown()
 	defer cancel()
 
 	pool, err := database.New(ctx, cfg.DatabaseURL, 10, 2)
