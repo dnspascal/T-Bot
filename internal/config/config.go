@@ -8,16 +8,34 @@ import (
 	"github.com/joho/godotenv"
 )
 
-type Config struct {
-	DatabaseURL string
-
-	// cTrader credentials
+// CTraderConfig holds cTrader-specific credentials
+type CTraderConfig struct {
 	ClientID     string
 	ClientSecret string
 	AccessToken  string
 	RefreshToken string
 	AccountID    int64
+	SymbolID     int64
 	Demo         bool
+}
+
+// BinanceConfig holds Binance-specific credentials
+type BinanceConfig struct {
+	APIKey    string
+	APISecret string
+	TestNet   bool
+}
+
+// Config holds all configuration for the trading bot
+type Config struct {
+	DatabaseURL string
+
+	// Primary provider selection (for single-provider mode)
+	Provider string // "ctrader" or "binance"
+
+	// Per-provider configurations
+	CTrader *CTraderConfig
+	Binance *BinanceConfig
 
 	// Risk settings
 	RiskPercent    float64
@@ -26,25 +44,61 @@ type Config struct {
 
 	// Strategy settings
 	Symbol         string
-	SymbolID       int64  // cTrader exchange symbol ID
+	SymbolID       int64  // cTrader exchange symbol ID (legacy, kept for compatibility)
 	SymbolUUID     string // database symbol UUID
 	StopLossPips   float64
 	TakeProfitPips float64
+
+	// Backwards compatibility fields
+	ClientID     string // Legacy: for cTrader
+	ClientSecret string // Legacy: for cTrader
+	AccessToken  string // Legacy: for cTrader
+	RefreshToken string // Legacy: for cTrader
+	AccountID    int64  // Legacy: for cTrader
+	Demo         bool   // Legacy: for cTrader
+
+	BinanceAPIKey    string // Legacy: for Binance
+	BinanceAPISecret string // Legacy: for Binance
 }
 
 func Load() (*Config, error) {
 	godotenv.Load()
 
-	accountID, err := strconv.ParseInt(mustEnv("CTRADER_ACCOUNT_ID"), 10, 64)
-	if err != nil {
-		return nil, fmt.Errorf("CTRADER_ACCOUNT_ID must be a number: %w", err)
+	// Load cTrader configuration (optional, only if provider is ctrader)
+	var ctraderCfg *CTraderConfig
+	if os.Getenv("PROVIDER") != "binance" {
+		accountID, err := strconv.ParseInt(mustEnv("CTRADER_ACCOUNT_ID"), 10, 64)
+		if err != nil {
+			return nil, fmt.Errorf("CTRADER_ACCOUNT_ID must be a number: %w", err)
+		}
+
+		symbolID, err := strconv.ParseInt(getEnv("CTRADER_SYMBOL_ID", "1"), 10, 64)
+		if err != nil {
+			return nil, fmt.Errorf("CTRADER_SYMBOL_ID must be a number: %w", err)
+		}
+
+		ctraderCfg = &CTraderConfig{
+			ClientID:     mustEnv("CTRADER_CLIENT_ID"),
+			ClientSecret: mustEnv("CTRADER_CLIENT_SECRET"),
+			AccessToken:  mustEnv("CTRADER_ACCESS_TOKEN"),
+			RefreshToken: getEnv("CTRADER_REFRESH_TOKEN", ""),
+			AccountID:    accountID,
+			SymbolID:     symbolID,
+			Demo:         getEnv("CTRADER_DEMO", "true") == "true",
+		}
 	}
 
-	symbolID, err := strconv.ParseInt(getEnv("CTRADER_SYMBOL_ID", "1"), 10, 64)
-	if err != nil {
-		return nil, fmt.Errorf("CTRADER_SYMBOL_ID must be a number: %w", err)
+	// Load Binance configuration (optional)
+	var binanceCfg *BinanceConfig
+	if os.Getenv("BINANCE_API_KEY") != "" {
+		binanceCfg = &BinanceConfig{
+			APIKey:  getEnv("BINANCE_API_KEY", ""),
+			APISecret: getEnv("BINANCE_API_SECRET", ""),
+			TestNet: getEnv("BINANCE_TESTNET", "true") == "true",
+		}
 	}
 
+	// Load common settings
 	symbolUUID := getEnv("CTRADER_SYMBOL_UUID", "")
 
 	initialBalance, err := strconv.ParseFloat(getEnv("INITIAL_BALANCE", "200.0"), 64)
@@ -72,23 +126,37 @@ func Load() (*Config, error) {
 		return nil, fmt.Errorf("TAKE_PROFIT_PIPS must be a number: %w", err)
 	}
 
-	return &Config{
+	cfg := &Config{
 		DatabaseURL:    mustEnv("DATABASE_URL"),
-		ClientID:       mustEnv("CTRADER_CLIENT_ID"),
-		ClientSecret:   mustEnv("CTRADER_CLIENT_SECRET"),
-		AccessToken:    mustEnv("CTRADER_ACCESS_TOKEN"),
-		RefreshToken:   getEnv("CTRADER_REFRESH_TOKEN", ""),
-		AccountID:      accountID,
-		Demo:           getEnv("CTRADER_DEMO", "true") == "true",
+		Provider:       getEnv("PROVIDER", "ctrader"),
+		CTrader:        ctraderCfg,
+		Binance:        binanceCfg,
 		InitialBalance: initialBalance,
 		RiskPercent:    riskPercent,
 		MaxDailyLoss:   maxDailyLoss,
 		Symbol:         getEnv("SYMBOL", "EURUSD"),
-		SymbolID:       symbolID,
 		SymbolUUID:     symbolUUID,
 		StopLossPips:   stopLossPips,
 		TakeProfitPips: takeProfitPips,
-	}, nil
+	}
+
+	// Set legacy fields for backwards compatibility
+	if ctraderCfg != nil {
+		cfg.ClientID = ctraderCfg.ClientID
+		cfg.ClientSecret = ctraderCfg.ClientSecret
+		cfg.AccessToken = ctraderCfg.AccessToken
+		cfg.RefreshToken = ctraderCfg.RefreshToken
+		cfg.AccountID = ctraderCfg.AccountID
+		cfg.SymbolID = ctraderCfg.SymbolID
+		cfg.Demo = ctraderCfg.Demo
+	}
+
+	if binanceCfg != nil {
+		cfg.BinanceAPIKey = binanceCfg.APIKey
+		cfg.BinanceAPISecret = binanceCfg.APISecret
+	}
+
+	return cfg, nil
 }
 
 func mustEnv(key string) string {

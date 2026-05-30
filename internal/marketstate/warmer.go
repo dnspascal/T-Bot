@@ -5,56 +5,45 @@ import (
 	"fmt"
 	"log/slog"
 
-	"github.com/denismgaya/t-bot/internal/api"
 	"github.com/denismgaya/t-bot/internal/indicator"
+	"github.com/denismgaya/t-bot/internal/provider"
 )
 
 type Warmer struct {
-	client       *api.Client
-	repo         Repository
-	calculator   *indicator.Calculator
-	provider     string
-	historicalCount int 
+	prov            provider.Provider
+	repo            Repository
+	calculator      *indicator.Calculator
+	providerName    string
+	historicalCount int
 }
 
-func NewWarmer(client *api.Client, repo Repository, provider string, historicalCount int) *Warmer {
+func NewWarmer(prov provider.Provider, repo Repository, providerName string, historicalCount int) *Warmer {
 	return &Warmer{
-		client:          client,
+		prov:            prov,
 		repo:            repo,
 		calculator:      indicator.NewCalculator(),
-		provider:        provider,
+		providerName:    providerName,
 		historicalCount: historicalCount,
 	}
 }
 
 func (w *Warmer) WarmupAllTimeframes(ctx context.Context, symbolID string) error {
-	periods := []struct {
-		code uint32
-		name string
-	}{
-		{api.PeriodM5, "M5"},
-		{api.PeriodM15, "M15"},
-		{api.PeriodM30, "M30"},
-		{api.PeriodH1, "H1"},
-		{api.PeriodH4, "H4"},
-		{api.PeriodD1, "D1"},
-	}
+	periods := []string{"M5", "M15", "M30", "H1", "H4", "D1"}
 
-	for _, p := range periods {
-		startTime := slog.Int64("start", 0)
-		if err := w.warmupTimeframe(ctx, symbolID, p.code, p.name); err != nil {
-			slog.Error("warmup failed", "period", p.name, "err", err)
-			return fmt.Errorf("warmup %s: %w", p.name, err)
+	for _, periodName := range periods {
+		if err := w.warmupTimeframe(ctx, symbolID, periodName); err != nil {
+			slog.Error("warmup failed", "period", periodName, "err", err)
+			return fmt.Errorf("warmup %s: %w", periodName, err)
 		}
-		slog.Info("warmup complete", "period", p.name, startTime)
+		slog.Info("warmup complete", "period", periodName)
 	}
 
 	slog.Info("all timeframes warmed up", "count", len(periods))
 	return nil
 }
 
-func (w *Warmer) warmupTimeframe(ctx context.Context, symbolID string, period uint32, periodName string) error {
-	candles, err := w.client.FetchHistoricalTrendbars(period, w.historicalCount)
+func (w *Warmer) warmupTimeframe(ctx context.Context, symbolID string, periodName string) error {
+	candles, err := w.prov.FetchHistoricalCandles(ctx, "", periodName, w.historicalCount)
 	if err != nil {
 		return fmt.Errorf("fetch historical %s: %w", periodName, err)
 	}
@@ -85,7 +74,7 @@ func (w *Warmer) warmupTimeframe(ctx context.Context, symbolID string, period ui
 
 		marketState := w.calculator.CalculateFromHistory(
 			symbolID,
-			w.provider,
+			w.providerName,
 			periodName,
 			candle.OpenTime,
 			candle.Open,

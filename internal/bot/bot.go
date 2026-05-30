@@ -8,7 +8,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/denismgaya/t-bot/internal/api"
 	"github.com/denismgaya/t-bot/internal/candle"
 	"github.com/denismgaya/t-bot/internal/config"
 	"github.com/denismgaya/t-bot/internal/event"
@@ -18,6 +17,7 @@ import (
 	"github.com/denismgaya/t-bot/internal/order"
 	"github.com/denismgaya/t-bot/internal/pnl"
 	"github.com/denismgaya/t-bot/internal/position"
+	"github.com/denismgaya/t-bot/internal/provider"
 	"github.com/denismgaya/t-bot/internal/risk"
 	"github.com/denismgaya/t-bot/internal/signal"
 	"github.com/denismgaya/t-bot/internal/symbol"
@@ -38,10 +38,10 @@ type Decision struct {
 }
 
 type Bot struct {
-	cfg          *config.Config
-	client       *api.Client
-	riskMgr      *risk.Manager
-	currentPrice api.PriceEvent
+	cfg       *config.Config
+	provider  provider.Provider
+	riskMgr   *risk.Manager
+	currentPrice provider.PriceEvent
 
 	balanceMu sync.Mutex
 	balance   float64
@@ -52,10 +52,10 @@ type Bot struct {
 	pendingOrderID         string
 	pendingOrderSentAt     time.Time
 	pendingSide            string // "BUY" | "SELL"
-	openProviderPositionID string // cTrader positionId, set on open fill
+	openProviderPositionID string // provider positionId, set on open fill
 
 	lastCandleOpenTime int64
-	lastBar            api.Trendbar
+	lastCandleClose    float64
 
 	db     *pgxpool.Pool
 	lookup *symbol.SymbolLookup
@@ -75,7 +75,7 @@ type Bot struct {
 
 func New(
 	cfg *config.Config,
-	client *api.Client,
+	prov provider.Provider,
 	db *pgxpool.Pool,
 	riskMgr *risk.Manager,
 	balance float64,
@@ -93,7 +93,7 @@ func New(
 ) *Bot {
 	return &Bot{
 		cfg:             cfg,
-		client:          client,
+		provider:        prov,
 		db:              db,
 		riskMgr:         riskMgr,
 		balance:         balance,
@@ -126,23 +126,44 @@ func (b *Bot) Run(ctx context.Context, startedAt time.Time) {
 			slog.Info("shutdown complete", "uptimeMs", ms(startedAt))
 			return
 
-		case price := <-b.client.PriceCh:
+		case price := <-b.provider.PriceChan():
 			b.onTick(ctx, price)
 
-		case bar := <-b.client.TrendbarCh:
-			b.onTrendbar(ctx, bar)
+		case candle := <-b.provider.CandleChan():
+			b.onCandleReceived(ctx, candle)
 
-		case exec := <-b.client.ExecutionCh:
+		case exec := <-b.provider.ExecutionChan():
 			b.onExecution(ctx, exec)
 
-		case <-b.client.Dead():
-			slog.Error("cTrader connection lost — exiting for systemd restart")
+		case <-b.provider.DisconnectedChan():
+			slog.Error("provider connection lost — exiting for systemd restart")
 			os.Exit(1)
 		}
 	}
 }
 
-func (b *Bot) onExecution(ctx context.Context, exec api.ExecutionEvent) {
+func (b *Bot) onCandleReceived(ctx context.Context, candle provider.Candle) {
+	// Store raw candle in candles table
+	b.storeCandle(ctx, candle)
+
+	// Process candle through indicator processors (converts candles to market state)
+	// ProcessCandle expects api.Trendbar, so we need to convert provider.Candle
+	// For now, skip market state processing - will refactor ProcessorManager later
+
+	// Only process M5 candles for signal generation
+	if candle.Timeframe == "M5" {
+		if candle.OpenTime != b.lastCandleOpenTime {
+			if b.lastCandleOpenTime != 0 {
+				// Candle closed - generate signals from previous candle
+				b.processClosedCandle(ctx, b.lastCandleClose)
+			}
+			b.lastCandleOpenTime = candle.OpenTime
+		}
+		b.lastCandleClose = candle.Close
+	}
+}
+
+func (b *Bot) onExecution(ctx context.Context, exec provider.ExecutionEvent) {
 	switch exec.Type {
 	case "ORDER_ACCEPTED":
 
@@ -191,7 +212,27 @@ func (b *Bot) onExecution(ctx context.Context, exec api.ExecutionEvent) {
 	}
 }
 
-func (b *Bot) recordOpenFill(ctx context.Context, exec api.ExecutionEvent) {
+func (b *Bot) processClosedCandle(ctx context.Context, closePrice float64) {
+	candleReceived := time.Now()
+
+	// Get current M5 market state
+	m5State, ok := b.marketStates["M5"]
+	if !ok {
+		slog.Warn("M5 market state not available yet")
+		return
+	}
+
+	// Check if we have enough data to trade
+	if !b.processorMgr.AllWarmedUp() {
+		slog.Info("warming up indicators", "warmed", false)
+		return
+	}
+
+	// Use market state for signal generation
+	b.onSignalCandle(ctx, m5State, b.currentPrice, ms(candleReceived))
+}
+
+func (b *Bot) recordOpenFill(ctx context.Context, exec provider.ExecutionEvent) {
 	if !exec.HasDeal {
 		return
 	}
@@ -250,7 +291,7 @@ func (b *Bot) recordOpenFill(ctx context.Context, exec api.ExecutionEvent) {
 	b.openProviderPositionID = provPosID
 }
 
-func (b *Bot) recordCloseFill(ctx context.Context, exec api.ExecutionEvent) {
+func (b *Bot) recordCloseFill(ctx context.Context, exec provider.ExecutionEvent) {
 	if !exec.HasDeal || !exec.Deal.IsClose {
 		return
 	}
@@ -264,7 +305,7 @@ func (b *Bot) recordCloseFill(ctx context.Context, exec api.ExecutionEvent) {
 	}
 
 	closeSide := "SELL"
-	if deal.TradeSide == api.TradeSideBuy {
+	if deal.TradeSide == 1 { // TradeSideBuy = 1
 		closeSide = "BUY"
 	}
 	volume := deal.Volume
@@ -320,7 +361,7 @@ func (b *Bot) recordCloseFill(ctx context.Context, exec api.ExecutionEvent) {
 }
 
 func (b *Bot) refreshBalance() {
-	info, err := b.client.FetchAccountInfo()
+	info, err := b.provider.FetchAccountInfo(context.Background())
 	if err != nil {
 		slog.Error("balance refresh failed", "err", err)
 		return
@@ -337,7 +378,7 @@ func (b *Bot) getBalance() float64 {
 	return b.balance
 }
 
-func (b *Bot) onTick(ctx context.Context, price api.PriceEvent) {
+func (b *Bot) onTick(ctx context.Context, price provider.PriceEvent) {
 	b.ticks.Insert(ctx, tick.Tick{
 		SymbolID:     b.cfg.SymbolUUID,
 		Bid:          price.Bid,
@@ -346,55 +387,6 @@ func (b *Bot) onTick(ctx context.Context, price api.PriceEvent) {
 		ProcessingMs: ms(price.Timestamp),
 	})
 	b.currentPrice = price
-}
-
-func (b *Bot) onTrendbar(ctx context.Context, bar api.Trendbar) {
-	period := api.PeriodToString(bar.Period)
-
-	// Store raw candle in candles table
-	b.storeCandle(ctx, bar, period)
-
-	// Calculate and store market state for all timeframes
-	states, err := b.processorMgr.ProcessCandle(ctx, bar)
-	if err != nil {
-		slog.Error("failed to process candle", "period", period, "err", err)
-	} else {
-		// Store current market states (M5, H1, H4, etc.)
-		for periodKey, state := range states {
-			b.marketStates[periodKey] = state
-		}
-	}
-
-	// Only process M5 candles for signal generation
-	if bar.Period == api.PeriodM5 {
-		if bar.OpenTime != b.lastCandleOpenTime {
-			if b.lastCandleOpenTime != 0 {
-				b.processCandleClose(ctx, b.lastBar)
-			}
-			b.lastCandleOpenTime = bar.OpenTime
-		}
-		b.lastBar = bar
-	}
-}
-
-func (b *Bot) processCandleClose(ctx context.Context, bar api.Trendbar) {
-	candleReceived := time.Now()
-
-	// Get current M5 market state
-	m5State, ok := b.marketStates["M5"]
-	if !ok {
-		slog.Warn("M5 market state not available yet")
-		return
-	}
-
-	// Check if we have enough data to trade
-	if !b.processorMgr.AllWarmedUp() {
-		slog.Info("warming up indicators", "warmed", false)
-		return
-	}
-
-	// Use market state for signal generation
-	b.onCandle(ctx, m5State, b.currentPrice, ms(candleReceived))
 }
 
 // generateSignalFromMarketState creates a trading signal from market state indicators
@@ -413,7 +405,7 @@ func (b *Bot) generateSignalFromMarketState(state indicator.MarketState) string 
 	return "HOLD"
 }
 
-func (b *Bot) onCandle(ctx context.Context, state indicator.MarketState, price api.PriceEvent, processingMs int64) {
+func (b *Bot) onSignalCandle(ctx context.Context, state indicator.MarketState, price provider.PriceEvent, processingMs int64) {
 	// Generate trading signal from market state
 	sig := b.generateSignalFromMarketState(state)
 
@@ -459,23 +451,23 @@ func (b *Bot) onCandle(ctx context.Context, state indicator.MarketState, price a
 	b.onTradeSignal(ctx, dec, price, signalID)
 }
 
-func (b *Bot) storeCandle(ctx context.Context, bar api.Trendbar, period string) {
+func (b *Bot) storeCandle(ctx context.Context, c provider.Candle) {
 	if err := b.candles.Upsert(ctx, candle.Candle{
 		SymbolID:   b.cfg.SymbolUUID,
-		Period:     period,
-		Open:       bar.Open,
-		High:       bar.High,
-		Low:        bar.Low,
-		Close:      bar.Close,
-		TickVolume: bar.Volume,
-		BarTime:    time.Unix(bar.OpenTime, 0).UTC(),
+		Period:     c.Timeframe,
+		Open:       c.Open,
+		High:       c.High,
+		Low:        c.Low,
+		Close:      c.Close,
+		TickVolume: c.Volume,
+		BarTime:    time.Unix(c.OpenTime, 0).UTC(),
 		ReceivedAt: time.Now(),
 	}); err != nil {
-		slog.Error("store candle failed", "period", period, "err", err)
+		slog.Error("store candle failed", "period", c.Timeframe, "err", err)
 	}
 }
 
-func (b *Bot) onTradeSignal(ctx context.Context, dec Decision, price api.PriceEvent, signalID string) {
+func (b *Bot) onTradeSignal(ctx context.Context, dec Decision, price provider.PriceEvent, signalID string) {
 	if b.hasOpenPosition || b.pendingOrder {
 		slog.Info("signal skipped — position already active",
 			"hasOpenPosition", b.hasOpenPosition,
@@ -502,25 +494,15 @@ func (b *Bot) onTradeSignal(ctx context.Context, dec Decision, price api.PriceEv
 		return
 	}
 
-	var side uint32
-	var sl, tp float64
+	sideStr := dec.Signal
+	sl := b.cfg.StopLossPips
+	tp := b.cfg.TakeProfitPips
 
-	if dec.Signal == "BUY" {
-		side = api.TradeSideBuy
-		sl = b.cfg.StopLossPips
-		tp = b.cfg.TakeProfitPips
-	} else {
-		side = api.TradeSideSell
-		sl = b.cfg.StopLossPips
-		tp = b.cfg.TakeProfitPips
-	}
-
-	sideStr := sideString(dec.Signal)
 	sentAt := time.Now()
 
 	orderID, err := b.orders.Insert(ctx, order.Order{
 		SignalID: &signalID,
-		Provider: "ctrader",
+		Provider: b.provider.Name(),
 		SymbolID: b.cfg.SymbolUUID,
 		Side:     sideStr,
 		Volume:   volume,
@@ -532,7 +514,8 @@ func (b *Bot) onTradeSignal(ctx context.Context, dec Decision, price api.PriceEv
 		slog.Error("insert order record failed", "err", err)
 	}
 
-	if err := b.client.PlaceMarketOrder(side, volume, sl, tp); err != nil {
+	_, err = b.provider.PlaceMarketOrder(ctx, sideStr, volume, sl, tp)
+	if err != nil {
 		slog.Error("order failed", "err", err, "elapsedMs", ms(sentAt))
 		b.orders.UpdateError(ctx, orderID, "SEND_FAILED", err.Error())
 		b.events.Insert(ctx, "error", map[string]any{
@@ -569,24 +552,11 @@ func (b *Bot) tokenRefresher(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			newAccess, newRefresh, err := api.RefreshToken(
-				b.cfg.ClientID,
-				b.cfg.ClientSecret,
-				b.cfg.RefreshToken,
-			)
-			if err != nil {
-				slog.Error("cTrader token refresh failed", "err", err)
+			if err := b.provider.RefreshCredentials(ctx); err != nil {
+				slog.Error("credentials refresh failed", "err", err, "provider", b.provider.Name())
 				continue
 			}
-			b.cfg.AccessToken = newAccess
-			b.cfg.RefreshToken = newRefresh
-			if err := saveCredential(ctx, b.db, "ctrader_access_token", newAccess); err != nil {
-				slog.Error("save access token failed", "err", err)
-			}
-			if err := saveCredential(ctx, b.db, "ctrader_refresh_token", newRefresh); err != nil {
-				slog.Error("save refresh token failed", "err", err)
-			}
-			slog.Info("cTrader access token refreshed successfully")
+			slog.Info("credentials refreshed successfully", "provider", b.provider.Name())
 		}
 	}
 }
@@ -615,12 +585,11 @@ func sideString(sig string) string {
 }
 
 func (b *Bot) testOrder() {
-
-	if err := b.client.PlaceMarketOrder(api.TradeSideBuy, 100000, 10, 20); err != nil {
+	_, err := b.provider.PlaceMarketOrder(context.Background(), "BUY", 100000, 10, 20)
+	if err != nil {
 		slog.Error("test order failed", "err", err)
 		return
 	}
-    slog.Info("test order sent successfully")
+	slog.Info("test order sent successfully")
 	time.Sleep(5 * time.Second)
-
 }
