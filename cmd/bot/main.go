@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"log"
 	"log/slog"
-	"os"
 	ossignal "os/signal"
 	"syscall"
 	"time"
@@ -24,15 +23,12 @@ import (
 	"github.com/denismgaya/t-bot/internal/risk"
 	"github.com/denismgaya/t-bot/internal/signal"
 	"github.com/denismgaya/t-bot/internal/snapshot"
-	"github.com/denismgaya/t-bot/internal/strategy"
 	"github.com/denismgaya/t-bot/internal/symbol"
 	"github.com/denismgaya/t-bot/internal/tick"
 )
 
 func main() {
-	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
-		Level: slog.LevelInfo,
-	})))
+	setupLogging()
 
 	cfg, err := config.Load()
 	if err != nil {
@@ -86,8 +82,6 @@ func main() {
 		riskMgr.RestoreLoss(-todayLoss)
 	}
 	slog.Info("daily pnl restored", "todayLoss", todayLoss)
-
-	strat := strategy.NewCombinedStrategy(9, 21, 14)
 
 	if token, err := bot.LoadCredential(ctx, pool, "ctrader_access_token"); err == nil && token != "" {
 		cfg.AccessToken = token
@@ -147,6 +141,7 @@ func main() {
 		slog.Warn("FetchAccountInfo failed, using configured initial balance", "err", err, "balance", cfg.InitialBalance)
 		traderInfo = api.TraderInfo{Balance: cfg.InitialBalance}
 	}
+
 	balance    := traderInfo.Balance
 	leverage   := traderInfo.Leverage
 	brokerName := traderInfo.BrokerName
@@ -160,6 +155,7 @@ func main() {
 		Trigger:        &trigger,
 		SnapshottedAt:  time.Now(),
 	})
+	
 	events.Insert(ctx, "account_snapshot", map[string]any{
 		"balance":  balance,
 		"leverage": leverage,
@@ -183,30 +179,6 @@ func main() {
 		"open_positions":    len(openPositions),
 		"has_open_position": hasOpenPosition,
 	}, elapsed(reconcileStart))
-
-	warmupStart := time.Now()
-	historicalBars, err := client.FetchHistoricalTrendbars(api.PeriodM5, 50)
-	if err != nil {
-		slog.Warn("warmup fetch failed, starting cold", "err", err)
-	} else {
-		closePrices := make([]float64, len(historicalBars))
-		for i, bar := range historicalBars {
-			closePrices[i] = bar.Close
-			candles.Upsert(ctx, candle.Candle{
-				SymbolID:   cfg.SymbolUUID,
-				Period:     "M5",
-				Open:       bar.Open,
-				High:       bar.High,
-				Low:        bar.Low,
-				Close:      bar.Close,
-				TickVolume: bar.Volume,
-				BarTime:    time.Unix(bar.OpenTime, 0).UTC(),
-				ReceivedAt: time.Now(),
-			})
-		}
-		strat.WarmUp(closePrices)
-		slog.Info("strategy warmed up", "candles", len(historicalBars), "elapsedMs", elapsed(warmupStart))
-	}
 
 	if err := client.SubscribeSpots(); err != nil {
 		log.Fatal("subscribe spots:", err)
@@ -265,7 +237,7 @@ func main() {
 		"startupMs", elapsed(botStart),
 	)
 
-	bot.New(cfg, client, pool, riskMgr, strat, balance, hasOpenPosition, lookup, ticks, candles, signals, orders, fills, positions, pnls, events, processorMgr).Run(ctx, botStart)
+	bot.New(cfg, client, pool, riskMgr, balance, hasOpenPosition, lookup, ticks, candles, signals, orders, fills, positions, pnls, events, processorMgr).Run(ctx, botStart)
 }
 
 func elapsed(t time.Time) int64 {

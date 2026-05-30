@@ -20,7 +20,6 @@ import (
 	"github.com/denismgaya/t-bot/internal/position"
 	"github.com/denismgaya/t-bot/internal/risk"
 	"github.com/denismgaya/t-bot/internal/signal"
-	"github.com/denismgaya/t-bot/internal/strategy"
 	"github.com/denismgaya/t-bot/internal/symbol"
 	"github.com/denismgaya/t-bot/internal/tick"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -28,11 +27,20 @@ import (
 
 const pipSize = 0.0001
 
+// Decision represents a trading decision
+type Decision struct {
+	Signal   string  // "BUY" or "SELL"
+	FastEMA  float64
+	SlowEMA  float64
+	RSI      float64
+	ADX      float64
+	ATR      float64
+}
+
 type Bot struct {
 	cfg          *config.Config
 	client       *api.Client
 	riskMgr      *risk.Manager
-	strat        *strategy.CombinedStrategy
 	currentPrice api.PriceEvent
 
 	balanceMu sync.Mutex
@@ -70,7 +78,6 @@ func New(
 	client *api.Client,
 	db *pgxpool.Pool,
 	riskMgr *risk.Manager,
-	strat *strategy.CombinedStrategy,
 	balance float64,
 	hasOpenPosition bool,
 	lookup *symbol.SymbolLookup,
@@ -89,7 +96,6 @@ func New(
 		client:          client,
 		db:              db,
 		riskMgr:         riskMgr,
-		strat:           strat,
 		balance:         balance,
 		hasOpenPosition: hasOpenPosition,
 		lookup:          lookup,
@@ -440,15 +446,14 @@ func (b *Bot) onCandle(ctx context.Context, state indicator.MarketState, price a
 		return
 	}
 
-	// Create a minimal Decision for onTradeSignal (temporary bridge)
-	dec := strategy.Decision{
-		Signal:   strategy.Buy,
-		FastEMA: state.EMAFast,
-		SlowEMA: state.EMASlow,
-		RSI:     state.RSI,
-	}
-	if sig == "SELL" {
-		dec.Signal = strategy.Sell
+	// Create a Decision for onTradeSignal
+	dec := Decision{
+		Signal:   sig,
+		FastEMA:  state.EMAFast,
+		SlowEMA:  state.EMASlow,
+		RSI:      state.RSI,
+		ADX:      state.ADX,
+		ATR:      state.ATR,
 	}
 
 	b.onTradeSignal(ctx, dec, price, signalID)
@@ -470,7 +475,7 @@ func (b *Bot) storeCandle(ctx context.Context, bar api.Trendbar, period string) 
 	}
 }
 
-func (b *Bot) onTradeSignal(ctx context.Context, dec strategy.Decision, price api.PriceEvent, signalID string) {
+func (b *Bot) onTradeSignal(ctx context.Context, dec Decision, price api.PriceEvent, signalID string) {
 	if b.hasOpenPosition || b.pendingOrder {
 		slog.Info("signal skipped — position already active",
 			"hasOpenPosition", b.hasOpenPosition,
@@ -497,14 +502,10 @@ func (b *Bot) onTradeSignal(ctx context.Context, dec strategy.Decision, price ap
 		return
 	}
 
-	if dec.Confluence == strategy.ConfluenceWeak {
-		volume = 100000
-	}
-
 	var side uint32
 	var sl, tp float64
 
-	if dec.Signal == strategy.Buy {
+	if dec.Signal == "BUY" {
 		side = api.TradeSideBuy
 		sl = b.cfg.StopLossPips
 		tp = b.cfg.TakeProfitPips
@@ -551,8 +552,8 @@ func (b *Bot) onTradeSignal(ctx context.Context, dec strategy.Decision, price ap
 			"signal_id":  signalID,
 			"side":       sideStr,
 			"volume":     volume,
-			"confluence": dec.Confluence,
 			"rsi":        dec.RSI,
+			"adx":        dec.ADX,
 			"sl":         sl,
 			"tp":         tp,
 			"elapsed_ms": ms(sentAt),
@@ -609,11 +610,8 @@ func ms(t time.Time) int64 {
 	return time.Since(t).Milliseconds()
 }
 
-func sideString(sig strategy.Signal) string {
-	if sig == strategy.Buy {
-		return "BUY"
-	}
-	return "SELL"
+func sideString(sig string) string {
+	return sig // Already "BUY" or "SELL"
 }
 
 func (b *Bot) testOrder() {
