@@ -116,6 +116,9 @@ func main() {
 	// Wait for all bots to complete
 	wg.Wait()
 	slog.Info("all bots stopped")
+
+	// Keep the process alive indefinitely so background goroutines continue running
+	select {}
 }
 
 func startBotForProvider(
