@@ -39,6 +39,22 @@ func SeedSymbols(ctx context.Context, db *pgxpool.Pool) error {
 			defaultSLPips:    10,
 			defaultTPPips:    20,
 		},
+		{
+			symbol:           "BTCUSDT",
+			assetClass:       "crypto",
+			baseAsset:        "BTC",
+			quoteAsset:       "USDT",
+			exchange:         "binance",
+			exchangeSymbolID: "BTCUSDT",
+			pipSize:          0.01,
+			minVolume:        1,
+			maxVolume:        1000000,
+			maxDailyVolume:   10000000,
+			lotSize:          1,
+			tradingHours:     "24/7",
+			defaultSLPips:    10,
+			defaultTPPips:    20,
+		},
 	}
 
 	for _, s := range symbols {

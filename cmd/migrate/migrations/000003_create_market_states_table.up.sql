@@ -2,7 +2,7 @@
 -- One row per completed candle per timeframe (M5, H1, H4, D1) per provider per symbol.
 -- Source of truth for market state; signals table references this to show WHY decisions were made.
 CREATE TABLE market_states (
-    id              UUID            PRIMARY KEY DEFAULT gen_random_uuid(),
+    id              UUID            NOT NULL DEFAULT gen_random_uuid(),
     symbol_id       UUID            NOT NULL REFERENCES symbols(id),
     provider        TEXT            NOT NULL DEFAULT 'ctrader',  -- ctrader, binance, oanda, etc.
     period          TEXT            NOT NULL,  -- M5, H1, H4, D1

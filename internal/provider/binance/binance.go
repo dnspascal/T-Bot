@@ -56,12 +56,12 @@ func New(cfg *config.Config, db *pgxpool.Pool, events EventsRepo, snaps Snapshot
 }
 
 func (b *Binance) Connect() error {
-	if b.cfg.Binance == nil || b.cfg.BinanceAPIKey == "" {
+	if b.cfg.Binance == nil || b.cfg.Binance.APIKey == "" {
 		return fmt.Errorf("Binance API key not configured")
 	}
 
 	// Create REST client
-	b.restClient = NewRestClient(b.cfg.BinanceAPIKey, b.cfg.BinanceAPISecret, b.cfg.Binance.TestNet)
+	b.restClient = NewRestClient(b.cfg.Binance.APIKey, b.cfg.Binance.APISecret, b.cfg.Binance.TestNet)
 
 	// Validate API key
 	valid, err := b.restClient.ValidateAPIKey()
@@ -73,7 +73,7 @@ func (b *Binance) Connect() error {
 	}
 
 	// Create WebSocket client
-	b.wsClient = NewWebSocketClient("EURUSD", b.cfg.Binance.TestNet)
+	b.wsClient = NewWebSocketClient(b.cfg.BinanceSymbol, b.cfg.Binance.TestNet)
 	if err := b.wsClient.Connect(); err != nil {
 		return fmt.Errorf("websocket connect: %w", err)
 	}
@@ -141,7 +141,7 @@ func (b *Binance) Auth(ctx context.Context) (*provider.AuthResult, error) {
 	trigger := "startup"
 	b.snaps.Insert(ctx, snapshot.Snapshot{
 		Provider:       "binance",
-		ProviderAcctID: b.cfg.BinanceAPIKey[:8] + "...",
+		ProviderAcctID: b.cfg.Binance.APIKey[:8] + "...",
 		Balance:        balance,
 		Trigger:        &trigger,
 		SnapshottedAt:  time.Now(),
@@ -150,7 +150,7 @@ func (b *Binance) Auth(ctx context.Context) (*provider.AuthResult, error) {
 	return &provider.AuthResult{
 		Balance:         balance,
 		HasOpenPosition: hasOpenPosition,
-		AccountID:       b.cfg.BinanceAPIKey[:8],
+		AccountID:       b.cfg.Binance.APIKey[:8],
 		Leverage:        1.0,
 		BrokerName:      "Binance",
 	}, nil
@@ -238,7 +238,7 @@ func (b *Binance) FetchAccountInfo(ctx context.Context) (*provider.AccountInfo, 
 	}
 
 	return &provider.AccountInfo{
-		AccountID:        b.cfg.BinanceAPIKey[:8],
+		AccountID:        b.cfg.Binance.APIKey[:8],
 		Balance:          balance,
 		Leverage:         1.0,
 		UsedMargin:       0,
@@ -313,7 +313,7 @@ func (b *Binance) FetchHistoricalCandles(
 	// Convert timeframe to Binance interval format
 	interval := timeframeToInterval(timeframe)
 
-	klines, err := b.restClient.GetKlines("EURUSD", interval, count)
+	klines, err := b.restClient.GetKlines(symbol, interval, count)
 	if err != nil {
 		return nil, fmt.Errorf("get klines: %w", err)
 	}
@@ -377,7 +377,7 @@ func (b *Binance) GetCredentialStatus(ctx context.Context) (*provider.Credential
 }
 
 func (b *Binance) ValidateCredentials(ctx context.Context) error {
-	if b.cfg.BinanceAPIKey == "" || b.cfg.BinanceAPISecret == "" {
+	if b.cfg.Binance.APIKey == "" || b.cfg.Binance.APISecret == "" {
 		return fmt.Errorf("Binance credentials incomplete")
 	}
 	return nil

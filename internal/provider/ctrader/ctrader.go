@@ -15,11 +15,12 @@ import (
 )
 
 type CTrader struct {
-	cfg    *config.Config
-	client *api.Client
-	db     *pgxpool.Pool
-	events EventsRepo
-	snaps  SnapshotsRepo
+	cfg       *config.Config
+	ctCfg     *config.CTraderConfig
+	client    *api.Client
+	db        *pgxpool.Pool
+	events    EventsRepo
+	snaps     SnapshotsRepo
 }
 
 type EventsRepo interface {
@@ -32,11 +33,12 @@ type SnapshotsRepo interface {
 
 func New(cfg *config.Config, client *api.Client, db *pgxpool.Pool, events EventsRepo, snaps SnapshotsRepo) *CTrader {
 	return &CTrader{
-		cfg:    cfg,
-		client: client,
-		db:     db,
-		events: events,
-		snaps:  snaps,
+		cfg:     cfg,
+		ctCfg:   cfg.CTrader,
+		client:  client,
+		db:      db,
+		events:  events,
+		snaps:   snaps,
 	}
 }
 
@@ -55,26 +57,32 @@ func (c *CTrader) Name() string {
 
 func (c *CTrader) Auth(ctx context.Context) (*provider.AuthResult, error) {
 	if token, err := bot.LoadCredential(ctx, c.db, "ctrader_access_token"); err == nil && token != "" {
-		c.cfg.AccessToken = token
+		c.ctCfg.AccessToken = token
 		slog.Info("loaded cTrader access token from DB")
 	}
 
 	// Authenticate app
 	authStart := time.Now()
-	if err := c.client.AuthApp(c.cfg.ClientID, c.cfg.ClientSecret); err != nil {
+	if err := c.client.AuthApp(c.ctCfg.ClientID, c.ctCfg.ClientSecret); err != nil {
 		c.events.Insert(ctx, "auth_fail", map[string]any{"error": err.Error(), "stage": "app_auth"}, elapsed(authStart))
 		return nil, fmt.Errorf("app auth: %w", err)
 	}
 	time.Sleep(2 * time.Second)
 
-	accounts, err := c.client.GetAccountList(c.cfg.AccessToken)
+	accounts, err := c.client.GetAccountList(c.ctCfg.AccessToken)
 	if err != nil {
 		return nil, fmt.Errorf("get account list: %w", err)
 	}
 
 	var ctidAccountID int64
+	mode := "demo"
+	if c.ctCfg.Demo {
+		mode = "demo"
+	} else {
+		mode = "live"
+	}
 	for _, acc := range accounts {
-		if acc.IsLive == !c.cfg.Demo {
+		if acc.IsLive == !c.ctCfg.Demo {
 			ctidAccountID = acc.CtidTraderAccountID
 			slog.Info("found trading account",
 				"ctidTraderAccountID", acc.CtidTraderAccountID,
@@ -85,15 +93,15 @@ func (c *CTrader) Auth(ctx context.Context) (*provider.AuthResult, error) {
 		}
 	}
 	if ctidAccountID == 0 {
-		return nil, fmt.Errorf("no %s account found in account list (got %d accounts)", c.cfg.Mode(), len(accounts))
+		return nil, fmt.Errorf("no %s account found in account list (got %d accounts)", mode, len(accounts))
 	}
 	c.client.SetAccountID(ctidAccountID)
 
-	if err := c.client.AuthAccount(c.cfg.AccessToken); err != nil {
+	if err := c.client.AuthAccount(c.ctCfg.AccessToken); err != nil {
 		c.events.Insert(ctx, "auth_fail", map[string]any{"error": err.Error(), "stage": "account_auth"}, elapsed(authStart))
 		return nil, fmt.Errorf("account auth: %w", err)
 	}
-	c.events.Insert(ctx, "auth_ok", map[string]any{"account_id": c.cfg.AccountID}, elapsed(authStart))
+	c.events.Insert(ctx, "auth_ok", map[string]any{"account_id": c.ctCfg.AccountID}, elapsed(authStart))
 	time.Sleep(2 * time.Second)
 
 	fetchStart := time.Now()
@@ -109,7 +117,7 @@ func (c *CTrader) Auth(ctx context.Context) (*provider.AuthResult, error) {
 	trigger := "startup"
 	c.snaps.Insert(ctx, snapshot.Snapshot{
 		Provider:       "ctrader",
-		ProviderAcctID: fmt.Sprintf("%d", c.cfg.AccountID),
+		ProviderAcctID: fmt.Sprintf("%d", c.ctCfg.AccountID),
 		Balance:        balance,
 		LeverageRatio:  &leverage,
 		BrokerName:     &brokerName,
@@ -132,7 +140,7 @@ func (c *CTrader) Auth(ctx context.Context) (*provider.AuthResult, error) {
 
 	hasOpenPosition := false
 	for _, pos := range openPositions {
-		if pos.SymbolID == c.cfg.SymbolID {
+		if pos.SymbolID == c.ctCfg.SymbolID {
 			hasOpenPosition = true
 			break
 		}
@@ -209,7 +217,7 @@ func (c *CTrader) FetchAccountInfo(ctx context.Context) (*provider.AccountInfo, 
 		return nil, err
 	}
 	return &provider.AccountInfo{
-		AccountID:        fmt.Sprintf("%d", c.cfg.AccountID),
+		AccountID:        fmt.Sprintf("%d", c.ctCfg.AccountID),
 		Balance:          info.Balance,
 		Leverage:         info.Leverage,
 		UsedMargin:       0,
@@ -217,7 +225,7 @@ func (c *CTrader) FetchAccountInfo(ctx context.Context) (*provider.AccountInfo, 
 		AvailableBalance: info.Balance,
 		Currency:         "USD",
 		BrokerName:       info.BrokerName,
-		IsLive:           !c.cfg.Demo,
+		IsLive:           !c.ctCfg.Demo,
 	}, nil
 }
 
@@ -229,7 +237,7 @@ func (c *CTrader) QueryOpenPositions(ctx context.Context, symbol string) ([]prov
 
 	var result []provider.Position
 	for _, pos := range positions {
-		if symbol != "" && pos.SymbolID != c.cfg.SymbolID {
+		if symbol != "" && pos.SymbolID != c.ctCfg.SymbolID {
 			continue
 		}
 		posID := fmt.Sprintf("%d", pos.PositionID)
@@ -308,17 +316,17 @@ func (c *CTrader) FetchLatestTick(ctx context.Context, symbol string) (*provider
 // === CREDENTIALS & REFRESH ===
 
 func (c *CTrader) RefreshCredentials(ctx context.Context) error {
-	newAccessToken, _, err := api.RefreshToken(c.cfg.ClientID, c.cfg.ClientSecret, c.cfg.RefreshToken)
+	newAccessToken, _, err := api.RefreshToken(c.ctCfg.ClientID, c.ctCfg.ClientSecret, c.ctCfg.RefreshToken)
 	if err != nil {
 		return err
 	}
-	c.cfg.AccessToken = newAccessToken
+	c.ctCfg.AccessToken = newAccessToken
 	slog.Info("cTrader credentials refreshed")
 	return nil
 }
 
 func (c *CTrader) GetCredentialStatus(ctx context.Context) (*provider.CredentialStatus, error) {
-	valid := c.cfg.AccessToken != ""
+	valid := c.ctCfg.AccessToken != ""
 	return &provider.CredentialStatus{
 		IsValid:     valid,
 		ExpiresAt:   nil,
@@ -328,10 +336,10 @@ func (c *CTrader) GetCredentialStatus(ctx context.Context) (*provider.Credential
 }
 
 func (c *CTrader) ValidateCredentials(ctx context.Context) error {
-	if c.cfg.ClientID == "" || c.cfg.ClientSecret == "" {
+	if c.ctCfg.ClientID == "" || c.ctCfg.ClientSecret == "" {
 		return fmt.Errorf("cTrader credentials incomplete: missing ClientID or ClientSecret")
 	}
-	if c.cfg.AccessToken == "" {
+	if c.ctCfg.AccessToken == "" {
 		return fmt.Errorf("cTrader AccessToken not set")
 	}
 	return nil

@@ -1,8 +1,10 @@
 package main
 
 import (
+	"context"
 	"log"
 	"log/slog"
+	"sync"
 	"time"
 
 	"github.com/denismgaya/t-bot/internal/api"
@@ -29,53 +31,116 @@ func main() {
 	}
 	defer svc.DB.Close()
 
-	symbolUUID, err := svc.Lookup.Get(cfg.Symbol)
-	if err != nil {
-		log.Fatal("get symbol uuid:", err)
-	}
-	cfg.SymbolUUID = symbolUUID
-	slog.Info("loaded symbol lookup", "symbol", cfg.Symbol, "symbolId", symbolUUID)
-
 	botStart := time.Now()
 
 	svc.Repos.Events.Insert(ctx, "started", map[string]any{
-		"symbol": cfg.Symbol,
-		"mode":   cfg.Mode(),
+		"enableCTrader": cfg.EnableCTrader,
+		"enableBinance": cfg.EnableBinance,
 	}, 0)
 
-	// Select and setup provider
-	var prov provider.Provider
+	// Initialize provider manager
+	provMgr := provider.NewManager()
+	var enabledProviders []string
 
-	switch cfg.Provider {
-	case "binance":
-		prov = binance.New(cfg, svc.DB.Pool, svc.Repos.Events, svc.Repos.Snapshots)
-	default: // default to ctrader
-		ctraderClient := api.NewClient(cfg.Demo, cfg.AccountID, cfg.SymbolID)
+	// ============ Initialize cTrader Provider ============
+	if cfg.EnableCTrader {
+		enabledProviders = append(enabledProviders, "ctrader")
+
+		ctraderClient := api.NewClient(cfg.CTrader.Demo, cfg.CTrader.AccountID, cfg.CTrader.SymbolID)
 		if err := ctraderClient.Connect(); err != nil {
 			log.Fatal("ctrader connect:", err)
 		}
-		prov = ctrader.New(cfg, ctraderClient, svc.DB.Pool, svc.Repos.Events, svc.Repos.Snapshots)
+		ctraderProv := ctrader.New(cfg, ctraderClient, svc.DB.Pool, svc.Repos.Events, svc.Repos.Snapshots)
+		if err := provMgr.Register("ctrader", ctraderProv); err != nil {
+			log.Fatal("register ctrader:", err)
+		}
 	}
 
-	// Authenticate with provider
-	authResult, err := prov.Auth(ctx)
+	// ============ Initialize Binance Provider ============
+	if cfg.EnableBinance {
+		enabledProviders = append(enabledProviders, "binance")
+
+		binanceProv := binance.New(cfg, svc.DB.Pool, svc.Repos.Events, svc.Repos.Snapshots)
+		if err := binanceProv.Connect(); err != nil {
+			log.Fatal("binance connect:", err)
+		}
+		if err := provMgr.Register("binance", binanceProv); err != nil {
+			log.Fatal("register binance:", err)
+		}
+	}
+
+	if len(enabledProviders) == 0 {
+		log.Fatal("no providers enabled")
+	}
+
+	// ============ Authenticate All Providers ============
+	authResults, err := provMgr.AuthAllProviders(ctx)
 	if err != nil {
-		log.Fatal(prov.Name()+" auth:", err)
-	}
-	defer prov.Close()
-
-	// Provider-specific setup (subscriptions, etc)
-	if err := prov.Setup(); err != nil {
-		log.Fatal(prov.Name()+" setup:", err)
+		slog.Warn("some providers failed auth", "err", err)
 	}
 
-	// Initialize bot with all dependencies (risk manager, warmup, processors)
-	botResult := initializeBot(ctx, cfg, svc, prov, authResult.Balance, authResult.HasOpenPosition)
+	// ============ Setup All Providers ============
+	if err := provMgr.SetupAllProviders(ctx); err != nil {
+		slog.Warn("some providers failed setup", "err", err)
+	}
+
+	slog.Info("all providers initialized", "providers", enabledProviders)
+
+	// ============ Start Bot Per Provider ============
+	var wg sync.WaitGroup
+
+	// cTrader bot
+	if cfg.EnableCTrader {
+		prov, _ := provMgr.GetProvider("ctrader")
+		authResult := authResults["ctrader"]
+
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			startBotForProvider(ctx, cfg, svc, prov, cfg.CTraderSymbol, authResult, botStart)
+		}()
+	}
+
+	// Binance bot
+	if cfg.EnableBinance {
+		prov, _ := provMgr.GetProvider("binance")
+		authResult := authResults["binance"]
+
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			startBotForProvider(ctx, cfg, svc, prov, cfg.BinanceSymbol, authResult, botStart)
+		}()
+	}
+
+	// Wait for all bots to complete
+	wg.Wait()
+	slog.Info("all bots stopped")
+}
+
+func startBotForProvider(
+	ctx context.Context,
+	cfg *config.Config,
+	svc *Services,
+	prov provider.Provider,
+	symbol string,
+	authResult *provider.AuthResult,
+	botStart time.Time,
+) {
+	// Load symbol UUID for this provider
+	symbolUUID, err := svc.Lookup.Get(symbol)
+	if err != nil {
+		slog.Error("get symbol uuid failed", "provider", prov.Name(), "symbol", symbol, "err", err)
+		return
+	}
+
+	// Initialize bot with provider-specific symbol
+	botResult := initializeBot(ctx, cfg, svc, prov, symbol, symbolUUID, authResult)
 
 	slog.Info("bot running",
-		"symbol", cfg.Symbol,
 		"provider", prov.Name(),
-		"demo", cfg.Demo,
+		"symbol", symbol,
+		"balance", authResult.Balance,
 		"riskPercent", cfg.RiskPercent,
 		"maxDailyLoss", cfg.MaxDailyLoss,
 		"startupMs", elapsed(botStart),

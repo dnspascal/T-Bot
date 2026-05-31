@@ -7,20 +7,17 @@ import (
 	"sync"
 )
 
-// Manager orchestrates multiple providers for parallel trading
 type Manager struct {
 	providers map[string]Provider
 	mu        sync.RWMutex
 }
 
-// NewManager creates a new provider manager
 func NewManager() *Manager {
 	return &Manager{
 		providers: make(map[string]Provider),
 	}
 }
 
-// Register adds a provider to the manager
 func (m *Manager) Register(name string, prov Provider) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -34,7 +31,6 @@ func (m *Manager) Register(name string, prov Provider) error {
 	return nil
 }
 
-// GetProvider returns a provider by name
 func (m *Manager) GetProvider(name string) (Provider, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -46,7 +42,6 @@ func (m *Manager) GetProvider(name string) (Provider, error) {
 	return prov, nil
 }
 
-// ListProviders returns all registered provider names
 func (m *Manager) ListProviders() []string {
 	m.mu.RLock()
 	defer m.mu.RUnlock()

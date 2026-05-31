@@ -2,7 +2,7 @@
 -- One row per decision (BUY/SELL/HOLD) when M5 candle closes.
 -- Stores references to market_states across timeframes in flexible JSONB (scales to any timeframe combo).
 CREATE TABLE signals (
-    id              UUID            PRIMARY KEY DEFAULT gen_random_uuid(),
+    id              UUID            NOT NULL DEFAULT gen_random_uuid(),
     symbol_id       UUID            NOT NULL REFERENCES symbols(id),
     provider        TEXT            NOT NULL DEFAULT 'ctrader',
 
@@ -33,7 +33,7 @@ CREATE TABLE signals (
     bar_time        TIMESTAMPTZ     NOT NULL,  -- when M5 candle closed (triggered this signal)
     created_at      TIMESTAMPTZ     NOT NULL DEFAULT NOW(),
 
-    UNIQUE(symbol_id, provider, bar_time)
+    PRIMARY KEY (id, created_at)
 );
 
 SELECT create_hypertable('signals', 'created_at');

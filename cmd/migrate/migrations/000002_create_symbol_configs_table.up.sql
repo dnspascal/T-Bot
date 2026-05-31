@@ -3,10 +3,10 @@ CREATE TABLE symbol_configs (
     symbol_id       UUID            NOT NULL REFERENCES symbols(id) ON DELETE CASCADE,
 
     pip_size        NUMERIC(10,8)   NOT NULL,
-    min_volume      INT64           NOT NULL,
-    lot_size        INT64           NOT NULL,
-    max_volume      INT64,          -- maximum units per single order (NULL = no limit)
-    max_daily_volume INT64,         -- maximum units per day (NULL = no limit)
+    min_volume      BIGINT           NOT NULL,
+    lot_size        BIGINT           NOT NULL,
+    max_volume      BIGINT,          -- maximum units per single order (NULL = no limit)
+    max_daily_volume BIGINT,         -- maximum units per day (NULL = no limit)
     trading_hours   TEXT,
     is_active       BOOLEAN         DEFAULT true,
 

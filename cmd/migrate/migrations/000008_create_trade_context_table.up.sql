@@ -6,7 +6,7 @@ CREATE TABLE trade_context (
     order_id            UUID            NOT NULL REFERENCES orders(id) ON DELETE CASCADE,
 
     signal_id           UUID,           -- signal that triggered this order (signals is hypertable, no FK)
-    market_state_id     UUID REFERENCES market_states(id),  -- market regime snapshot at order time
+    market_state_id     UUID,           -- market regime snapshot at order time (reference only, no FK due to TimescaleDB partitioning)
 
     -- Account snapshot at execution
     balance_before      NUMERIC(18,4),  -- balance before this trade

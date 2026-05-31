@@ -30,12 +30,15 @@ type BinanceConfig struct {
 type Config struct {
 	DatabaseURL string
 
-	// Primary provider selection (for single-provider mode)
-	Provider string // "ctrader" or "binance"
-
 	// Per-provider configurations
 	CTrader *CTraderConfig
 	Binance *BinanceConfig
+
+	// Provider-specific symbols (for multi-provider mode)
+	EnableCTrader  bool
+	CTraderSymbol  string
+	EnableBinance  bool
+	BinanceSymbol  string
 
 	// Risk settings
 	RiskPercent    float64
@@ -43,30 +46,16 @@ type Config struct {
 	InitialBalance float64 // fallback balance if FetchAccountInfo fails
 
 	// Strategy settings
-	Symbol         string
-	SymbolID       int64  // cTrader exchange symbol ID (legacy, kept for compatibility)
-	SymbolUUID     string // database symbol UUID
 	StopLossPips   float64
 	TakeProfitPips float64
-
-	// Backwards compatibility fields
-	ClientID     string // Legacy: for cTrader
-	ClientSecret string // Legacy: for cTrader
-	AccessToken  string // Legacy: for cTrader
-	RefreshToken string // Legacy: for cTrader
-	AccountID    int64  // Legacy: for cTrader
-	Demo         bool   // Legacy: for cTrader
-
-	BinanceAPIKey    string // Legacy: for Binance
-	BinanceAPISecret string // Legacy: for Binance
 }
 
 func Load() (*Config, error) {
 	godotenv.Load()
 
-	// Load cTrader configuration (optional, only if provider is ctrader)
+	// Load cTrader configuration (optional, only if enabled)
 	var ctraderCfg *CTraderConfig
-	if os.Getenv("PROVIDER") != "binance" {
+	if getEnv("ENABLE_CTRADER", "true") == "true" {
 		accountID, err := strconv.ParseInt(mustEnv("CTRADER_ACCOUNT_ID"), 10, 64)
 		if err != nil {
 			return nil, fmt.Errorf("CTRADER_ACCOUNT_ID must be a number: %w", err)
@@ -99,8 +88,6 @@ func Load() (*Config, error) {
 	}
 
 	// Load common settings
-	symbolUUID := getEnv("CTRADER_SYMBOL_UUID", "")
-
 	initialBalance, err := strconv.ParseFloat(getEnv("INITIAL_BALANCE", "200.0"), 64)
 	if err != nil {
 		return nil, fmt.Errorf("INITIAL_BALANCE must be a number: %w", err)
@@ -128,32 +115,19 @@ func Load() (*Config, error) {
 
 	cfg := &Config{
 		DatabaseURL:    mustEnv("DATABASE_URL"),
-		Provider:       getEnv("PROVIDER", "ctrader"),
 		CTrader:        ctraderCfg,
 		Binance:        binanceCfg,
 		InitialBalance: initialBalance,
 		RiskPercent:    riskPercent,
 		MaxDailyLoss:   maxDailyLoss,
-		Symbol:         getEnv("SYMBOL", "EURUSD"),
-		SymbolUUID:     symbolUUID,
 		StopLossPips:   stopLossPips,
 		TakeProfitPips: takeProfitPips,
-	}
 
-	// Set legacy fields for backwards compatibility
-	if ctraderCfg != nil {
-		cfg.ClientID = ctraderCfg.ClientID
-		cfg.ClientSecret = ctraderCfg.ClientSecret
-		cfg.AccessToken = ctraderCfg.AccessToken
-		cfg.RefreshToken = ctraderCfg.RefreshToken
-		cfg.AccountID = ctraderCfg.AccountID
-		cfg.SymbolID = ctraderCfg.SymbolID
-		cfg.Demo = ctraderCfg.Demo
-	}
-
-	if binanceCfg != nil {
-		cfg.BinanceAPIKey = binanceCfg.APIKey
-		cfg.BinanceAPISecret = binanceCfg.APISecret
+		// Multi-provider configuration
+		EnableCTrader: getEnv("ENABLE_CTRADER", "true") == "true",
+		CTraderSymbol: getEnv("CTRADER_SYMBOL", "EURUSD"),
+		EnableBinance: getEnv("ENABLE_BINANCE", "false") == "true",
+		BinanceSymbol: getEnv("BINANCE_SYMBOL", "BTCUSDT"),
 	}
 
 	return cfg, nil
@@ -174,9 +148,3 @@ func getEnv(key, fallback string) string {
 	return fallback
 }
 
-func (c *Config) Mode() string {
-	if c.Demo {
-		return "demo"
-	}
-	return "live"
-}

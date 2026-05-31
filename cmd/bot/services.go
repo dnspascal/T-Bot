@@ -48,7 +48,16 @@ func initServices(ctx context.Context, cfg *config.Config) (*Services, error) {
 		return nil, err
 	}
 
-	lookup, err := symbol.LoadLookup(ctx, pool, []string{cfg.Symbol})
+	// Load symbols for all enabled providers
+	var symbols []string
+	if cfg.EnableCTrader {
+		symbols = append(symbols, cfg.CTraderSymbol)
+	}
+	if cfg.EnableBinance {
+		symbols = append(symbols, cfg.BinanceSymbol)
+	}
+
+	lookup, err := symbol.LoadLookup(ctx, pool, symbols)
 	if err != nil {
 		pool.Close()
 		return nil, err

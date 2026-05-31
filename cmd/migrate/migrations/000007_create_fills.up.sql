@@ -57,5 +57,5 @@ CREATE TABLE fills (
 CREATE INDEX idx_fills_our_order_id    ON fills (our_order_id);
 CREATE INDEX idx_fills_our_position_id ON fills (our_position_id);
 CREATE INDEX idx_fills_provider_pos    ON fills (provider, provider_position_id);
-CREATE INDEX idx_fills_symbol          ON fills (symbol, received_at DESC);
+CREATE INDEX idx_fills_symbol          ON fills (symbol_id, received_at DESC);
 CREATE INDEX idx_fills_event_type      ON fills (event_type, received_at DESC);

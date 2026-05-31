@@ -43,6 +43,10 @@ type Bot struct {
 	riskMgr   *risk.Manager
 	currentPrice provider.PriceEvent
 
+	symbol        string
+	symbolUUID    string
+	providerAcctID string
+
 	balanceMu sync.Mutex
 	balance   float64
 
@@ -76,6 +80,9 @@ type Bot struct {
 func New(
 	cfg *config.Config,
 	prov provider.Provider,
+	symbol string,
+	symbolUUID string,
+	providerAcctID string,
 	db *pgxpool.Pool,
 	riskMgr *risk.Manager,
 	balance float64,
@@ -94,6 +101,9 @@ func New(
 	return &Bot{
 		cfg:             cfg,
 		provider:        prov,
+		symbol:          symbol,
+		symbolUUID:      symbolUUID,
+		providerAcctID:  providerAcctID,
 		db:              db,
 		riskMgr:         riskMgr,
 		balance:         balance,
@@ -254,8 +264,8 @@ func (b *Bot) recordOpenFill(ctx context.Context, exec provider.ExecutionEvent) 
 		OurOrderID:         &b.pendingOrderID,
 		Provider:           "ctrader",
 		ProviderPositionID: provPosID,
-		ProviderAcctID:     fmt.Sprintf("%d", b.cfg.AccountID),
-		SymbolID:           b.cfg.SymbolUUID,
+		ProviderAcctID:     b.providerAcctID,
+		SymbolID:           b.symbolUUID,
 		Side:               b.pendingSide,
 		Volume:             deal.FilledVolume,
 		OpenPrice:          &deal.ExecutionPrice,
@@ -274,7 +284,7 @@ func (b *Bot) recordOpenFill(ctx context.Context, exec provider.ExecutionEvent) 
 		ProviderFillID:     fmt.Sprintf("%d", deal.DealID),
 		ProviderOrderID:    &provOrderID,
 		ProviderPositionID: &provPosID,
-		SymbolID:           b.cfg.SymbolUUID,
+		SymbolID:           b.symbolUUID,
 		Side:               b.pendingSide,
 		Volume:             &volume,
 		FilledVolume:       &filledVolume,
@@ -324,7 +334,7 @@ func (b *Bot) recordCloseFill(ctx context.Context, exec provider.ExecutionEvent)
 		ProviderFillID:     fmt.Sprintf("%d", deal.DealID),
 		ProviderOrderID:    &provOrderID,
 		ProviderPositionID: &provPosID,
-		SymbolID:           b.cfg.SymbolUUID,
+		SymbolID:           b.symbolUUID,
 		Side:               closeSide,
 		Volume:             &volume,
 		FilledVolume:       &filledVolume,
@@ -347,7 +357,7 @@ func (b *Bot) recordCloseFill(ctx context.Context, exec provider.ExecutionEvent)
 
 	realized := cl.GrossProfit + cl.Commission + cl.Swap
 	isWin := realized > 0
-	if err := b.pnls.Upsert(ctx, b.cfg.SymbolUUID, realized, cl.GrossProfit, cl.Commission, cl.Swap, isWin, 0, 0); err != nil {
+	if err := b.pnls.Upsert(ctx, b.symbolUUID, realized, cl.GrossProfit, cl.Commission, cl.Swap, isWin, 0, 0); err != nil {
 		slog.Error("pnls.Upsert failed", "err", err)
 	}
 
@@ -380,7 +390,7 @@ func (b *Bot) getBalance() float64 {
 
 func (b *Bot) onTick(ctx context.Context, price provider.PriceEvent) {
 	b.ticks.Insert(ctx, tick.Tick{
-		SymbolID:     b.cfg.SymbolUUID,
+		SymbolID:     b.symbolUUID,
 		Bid:          price.Bid,
 		Ask:          price.Ask,
 		ReceivedAt:   price.Timestamp,
@@ -411,7 +421,7 @@ func (b *Bot) onSignalCandle(ctx context.Context, state indicator.MarketState, p
 
 	// Store signal with indicator values
 	signalID, err := b.signals.Insert(ctx, signal.Signal{
-		SymbolID:     b.cfg.SymbolUUID,
+		SymbolID:     b.symbolUUID,
 		Signal:       sig,
 		FastEMA:      state.EMAFast,
 		SlowEMA:      state.EMASlow,
@@ -453,7 +463,7 @@ func (b *Bot) onSignalCandle(ctx context.Context, state indicator.MarketState, p
 
 func (b *Bot) storeCandle(ctx context.Context, c provider.Candle) {
 	if err := b.candles.Upsert(ctx, candle.Candle{
-		SymbolID:   b.cfg.SymbolUUID,
+		SymbolID:   b.symbolUUID,
 		Period:     c.Timeframe,
 		Open:       c.Open,
 		High:       c.High,
@@ -503,7 +513,7 @@ func (b *Bot) onTradeSignal(ctx context.Context, dec Decision, price provider.Pr
 	orderID, err := b.orders.Insert(ctx, order.Order{
 		SignalID: &signalID,
 		Provider: b.provider.Name(),
-		SymbolID: b.cfg.SymbolUUID,
+		SymbolID: b.symbolUUID,
 		Side:     sideStr,
 		Volume:   volume,
 		SL:       &sl,
