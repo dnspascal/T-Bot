@@ -215,9 +215,31 @@ func (c *RestClient) GetKlines(symbol, interval string, limit int) ([]KlineRespo
 		return nil, fmt.Errorf("GetKlines failed: %d - %s", resp.StatusCode, string(body))
 	}
 
-	var klines []KlineResponse
-	if err := json.NewDecoder(resp.Body).Decode(&klines); err != nil {
+	// Binance returns klines as array of arrays: [[timestamp, open, high, ...]]
+	var rawKlines [][]interface{}
+	if err := json.NewDecoder(resp.Body).Decode(&rawKlines); err != nil {
 		return nil, fmt.Errorf("decode klines response: %w", err)
+	}
+
+	// Convert raw arrays to KlineResponse structs
+	klines := make([]KlineResponse, len(rawKlines))
+	for i, raw := range rawKlines {
+		if len(raw) < 11 {
+			continue
+		}
+		klines[i] = KlineResponse{
+			OpenTime:       int64(raw[0].(float64)),
+			Open:           fmt.Sprintf("%.8f", raw[1]),
+			High:           fmt.Sprintf("%.8f", raw[2]),
+			Low:            fmt.Sprintf("%.8f", raw[3]),
+			Close:          fmt.Sprintf("%.8f", raw[4]),
+			Volume:         fmt.Sprintf("%.0f", raw[5]),
+			CloseTime:      int64(raw[6].(float64)),
+			QuoteVolume:    fmt.Sprintf("%.0f", raw[7]),
+			Trades:         int64(raw[8].(float64)),
+			TakerBuyBase:   fmt.Sprintf("%.0f", raw[9]),
+			TakerBuyQuote:  fmt.Sprintf("%.0f", raw[10]),
+		}
 	}
 
 	return klines, nil

@@ -39,8 +39,7 @@ func (r *PostgresRepository) Insert(ctx context.Context, state indicator.MarketS
 			ema_slow = EXCLUDED.ema_slow,
 			rsi = EXCLUDED.rsi,
 			adx = EXCLUDED.adx,
-			atr = EXCLUDED.atr,
-			updated_at = NOW()
+			atr = EXCLUDED.atr
 	`, state.SymbolID, state.Provider, state.Period, state.BarTime,
 		state.Open, state.High, state.Low, state.Close, state.Volume,
 		state.EMAFast, state.EMASlow, state.RSI, state.ADX, state.ATR)
