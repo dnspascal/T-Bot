@@ -2,6 +2,7 @@ package marketstate
 
 import (
 	"context"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -27,6 +28,9 @@ func NewPostgresRepository(db *pgxpool.Pool) *PostgresRepository {
 
 // Insert stores or updates a market state
 func (r *PostgresRepository) Insert(ctx context.Context, state indicator.MarketState) error {
+	// Convert Unix timestamp (milliseconds) to time.Time
+	barTime := time.UnixMilli(state.BarTime)
+
 	_, err := r.db.Exec(ctx, `
 		INSERT INTO market_states (
 			symbol_id, provider, period, bar_time,
@@ -40,7 +44,7 @@ func (r *PostgresRepository) Insert(ctx context.Context, state indicator.MarketS
 			rsi = EXCLUDED.rsi,
 			adx = EXCLUDED.adx,
 			atr = EXCLUDED.atr
-	`, state.SymbolID, state.Provider, state.Period, state.BarTime,
+	`, state.SymbolID, state.Provider, state.Period, barTime,
 		state.Open, state.High, state.Low, state.Close, state.Volume,
 		state.EMAFast, state.EMASlow, state.RSI, state.ADX, state.ATR)
 

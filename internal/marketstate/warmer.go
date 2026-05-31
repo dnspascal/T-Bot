@@ -27,11 +27,11 @@ func NewWarmer(prov provider.Provider, repo Repository, providerName string, his
 	}
 }
 
-func (w *Warmer) WarmupAllTimeframes(ctx context.Context, symbolID string) error {
+func (w *Warmer) WarmupAllTimeframes(ctx context.Context, symbol, symbolUUID string) error {
 	periods := []string{"M5", "M15", "M30", "H1", "H4", "D1"}
 
 	for _, periodName := range periods {
-		if err := w.warmupTimeframe(ctx, symbolID, periodName); err != nil {
+		if err := w.warmupTimeframe(ctx, symbol, symbolUUID, periodName); err != nil {
 			slog.Error("warmup failed", "period", periodName, "err", err)
 			return fmt.Errorf("warmup %s: %w", periodName, err)
 		}
@@ -42,8 +42,8 @@ func (w *Warmer) WarmupAllTimeframes(ctx context.Context, symbolID string) error
 	return nil
 }
 
-func (w *Warmer) warmupTimeframe(ctx context.Context, symbolID string, periodName string) error {
-	candles, err := w.prov.FetchHistoricalCandles(ctx, symbolID, periodName, w.historicalCount)
+func (w *Warmer) warmupTimeframe(ctx context.Context, symbol, symbolUUID, periodName string) error {
+	candles, err := w.prov.FetchHistoricalCandles(ctx, symbol, periodName, w.historicalCount)
 	if err != nil {
 		return fmt.Errorf("fetch historical %s: %w", periodName, err)
 	}
@@ -73,7 +73,7 @@ func (w *Warmer) warmupTimeframe(ctx context.Context, symbolID string, periodNam
 		historicalOHLC := ohlcData[:i+1]
 
 		marketState := w.calculator.CalculateFromHistory(
-			symbolID,
+			symbolUUID,
 			w.providerName,
 			periodName,
 			candle.OpenTime,
