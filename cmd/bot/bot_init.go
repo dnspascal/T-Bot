@@ -40,7 +40,7 @@ func initializeBot(ctx context.Context, cfg *config.Config, svc *Services, prov 
 	// Warmup market states from provider
 	warmerStart := time.Now()
 	warmer := marketstate.NewWarmer(prov, svc.Repos.MarketState, prov.Name(), 50)
-	if err := warmer.WarmupAllTimeframes(ctx, symbolUUID); err != nil {
+	if err := warmer.WarmupAllTimeframes(ctx, symbol); err != nil {
 		slog.Warn("warmup failed", "err", err)
 	}
 	slog.Info("warmup complete", "elapsedMs", elapsed(warmerStart))

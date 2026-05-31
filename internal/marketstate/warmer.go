@@ -43,7 +43,7 @@ func (w *Warmer) WarmupAllTimeframes(ctx context.Context, symbolID string) error
 }
 
 func (w *Warmer) warmupTimeframe(ctx context.Context, symbolID string, periodName string) error {
-	candles, err := w.prov.FetchHistoricalCandles(ctx, "", periodName, w.historicalCount)
+	candles, err := w.prov.FetchHistoricalCandles(ctx, symbolID, periodName, w.historicalCount)
 	if err != nil {
 		return fmt.Errorf("fetch historical %s: %w", periodName, err)
 	}
