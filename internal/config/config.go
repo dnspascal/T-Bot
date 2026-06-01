@@ -48,6 +48,9 @@ type Config struct {
 	// Strategy settings
 	StopLossPips   float64
 	TakeProfitPips float64
+
+	// Trading period (M5, M15, M30, H1, H4, D1)
+	Period string
 }
 
 func Load() (*Config, error) {
@@ -128,6 +131,9 @@ func Load() (*Config, error) {
 		CTraderSymbol: getEnv("CTRADER_SYMBOL", "EURUSD"),
 		EnableBinance: getEnv("ENABLE_BINANCE", "false") == "true",
 		BinanceSymbol: getEnv("BINANCE_SYMBOL", "BTCUSDT"),
+
+		// Trading period
+		Period: getEnv("TRADING_PERIOD", "M5"),
 	}
 
 	return cfg, nil

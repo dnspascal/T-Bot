@@ -5,9 +5,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
 
+	"github.com/denismgaya/t-bot/internal/config"
 	"github.com/gorilla/websocket"
 )
 
@@ -16,9 +18,9 @@ const (
 	wsTestnetURL = "wss://stream.testnet.binance.vision/ws"
 )
 
-// WebSocketClient manages Binance WebSocket connections for market data
 type WebSocketClient struct {
 	symbol        string
+	period        string  
 	baseURL       string
 	conn          *websocket.Conn
 	mu            sync.RWMutex
@@ -65,8 +67,7 @@ type TradeData struct {
 	IsBuyer   bool
 }
 
-// NewWebSocketClient creates a new WebSocket client
-func NewWebSocketClient(symbol string, testnet bool) *WebSocketClient {
+func NewWebSocketClient(symbol, period string, testnet bool) *WebSocketClient {
 	baseURL := wsBaseURL
 	if testnet {
 		baseURL = wsTestnetURL
@@ -76,6 +77,7 @@ func NewWebSocketClient(symbol string, testnet bool) *WebSocketClient {
 
 	return &WebSocketClient{
 		symbol:   symbol,
+		period:   period,
 		baseURL:  baseURL,
 		priceCh:  make(chan PriceData, 100),
 		klineCh:  make(chan KlineData, 100),
@@ -86,13 +88,22 @@ func NewWebSocketClient(symbol string, testnet bool) *WebSocketClient {
 	}
 }
 
-// Connect establishes WebSocket connections for price, klines, and trades
 func (w *WebSocketClient) Connect() error {
 	symbol := w.symbol
-	wsURL := fmt.Sprintf("%s/%s@bookTicker/%s@kline_1m/%s@trade",
+
+	intervals := config.BinanceIntervals()
+	var klineStreams strings.Builder
+	for i, interval := range intervals {
+		if i > 0 {
+			klineStreams.WriteString("/")
+		}
+		fmt.Fprintf(&klineStreams, "%s@kline_%s", symbol, interval)
+	}
+
+	wsURL := fmt.Sprintf("%s/%s@bookTicker/%s/%s@trade",
 		w.baseURL,
 		symbol,
-		symbol,
+		klineStreams.String(),
 		symbol,
 	)
 
@@ -110,7 +121,6 @@ func (w *WebSocketClient) Connect() error {
 	return nil
 }
 
-// Close closes the WebSocket connection
 func (w *WebSocketClient) Close() error {
 	w.cancel()
 	w.mu.Lock()
@@ -166,13 +176,8 @@ func (w *WebSocketClient) readLoop() {
 		var msg json.RawMessage
 		err := conn.ReadJSON(&msg)
 		if err != nil {
-			if websocket.IsCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
-				slog.Info("websocket closed")
-				return
-			}
 			slog.Error("websocket read error", "err", err)
-			time.Sleep(time.Second)
-			continue
+			return  // Exit on any error - don't retry dead connection
 		}
 
 		slog.Debug("websocket message received", "msg", string(msg))

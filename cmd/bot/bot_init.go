@@ -33,7 +33,6 @@ func initializeBot(ctx context.Context, cfg *config.Config, svc *Services, prov 
 	if todayLoss < 0 {
 		riskMgr.RestoreLoss(-todayLoss)
 	}
-	slog.Info("daily pnl restored", "todayLoss", todayLoss, "provider", prov.Name(), "symbol", symbol)
 
 	warmerStart := time.Now()
 	warmer := marketstate.NewWarmer(prov, svc.Repos.MarketState, prov.Name(), 50)

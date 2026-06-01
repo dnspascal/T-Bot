@@ -68,10 +68,8 @@ func (b *Binance) Connect() error {
 		return fmt.Errorf("Binance API key not configured")
 	}
 
-	// Create REST client
 	b.restClient = NewRestClient(b.cfg.Binance.APIKey, b.cfg.Binance.APISecret, b.cfg.Binance.TestNet)
 
-	// Validate API key
 	valid, err := b.restClient.ValidateAPIKey()
 	if err != nil {
 		return fmt.Errorf("API key validation failed: %w", err)
@@ -80,13 +78,11 @@ func (b *Binance) Connect() error {
 		return fmt.Errorf("API key invalid or insufficient permissions")
 	}
 
-	// Create WebSocket client
-	b.wsClient = NewWebSocketClient(b.cfg.BinanceSymbol, b.cfg.Binance.TestNet)
+	b.wsClient = NewWebSocketClient(b.cfg.BinanceSymbol, b.cfg.Period, b.cfg.Binance.TestNet)
 	if err := b.wsClient.Connect(); err != nil {
 		return fmt.Errorf("websocket connect: %w", err)
 	}
 
-	// Start event forwarding goroutines
 	go b.forwardPriceEvents()
 	go b.forwardKlineEvents()
 
@@ -463,24 +459,10 @@ func elapsed(t time.Time) int64 {
 }
 
 func timeframeToInterval(tf string) string {
-	switch tf {
-	case "M1":
-		return "1m"
-	case "M5":
-		return "5m"
-	case "M15":
-		return "15m"
-	case "M30":
-		return "30m"
-	case "H1":
-		return "1h"
-	case "H4":
-		return "4h"
-	case "D1":
-		return "1d"
-	default:
-		return "1m"
+	if interval, exists := config.PeriodToBinanceInterval[tf]; exists {
+		return interval
 	}
+	return "1m"  // Fallback
 }
 
 func intervalToTimeframe(interval string) string {

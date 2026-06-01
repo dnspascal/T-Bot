@@ -8,8 +8,6 @@ import (
 	"github.com/denismgaya/t-bot/internal/indicator"
 )
 
-// CandleBuffer stores recent candles for a timeframe to feed to indicator calculations
-// Maintains a sliding window: always has the last N candles for the period
 type CandleBuffer interface {
 	// AddCandle adds a new candle to the buffer
 	AddCandle(open, high, low, close float64, volume int64)
