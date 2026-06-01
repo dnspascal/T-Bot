@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"os"
 	"sync"
 	"time"
 
@@ -146,8 +145,8 @@ func (b *Bot) Run(ctx context.Context, startedAt time.Time) {
 			b.onExecution(ctx, exec)
 
 		case <-b.provider.DisconnectedChan():
-			slog.Error("provider connection lost — exiting for systemd restart")
-			os.Exit(1)
+			slog.Error("provider connection lost — bot stopping")
+			return
 		}
 	}
 }

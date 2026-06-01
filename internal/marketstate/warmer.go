@@ -66,9 +66,7 @@ func (w *Warmer) warmupTimeframe(ctx context.Context, symbol, symbolUUID, period
 		})
 	}
 
-	for i := 0; i < len(candles); i++ {
-		candle := candles[i]
-
+	for i, candle := range candles {
 		historicalCloses := closes[:i+1]
 		historicalOHLC := ohlcData[:i+1]
 

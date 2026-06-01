@@ -2,6 +2,7 @@ package binance
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"strconv"
@@ -14,6 +15,13 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
+const (
+	binanceBrokerName    = "Binance"
+	binanceAccountMode   = "netted"
+	binanceLeverage      = 1.0
+	binanceQuoteCurrency = "USDT"
+)
+
 type Binance struct {
 	cfg    *config.Config
 	db     *pgxpool.Pool
@@ -24,10 +32,10 @@ type Binance struct {
 	wsClient   *WebSocketClient
 
 	// Event channels
-	priceCh      chan provider.PriceEvent
-	executionCh  chan provider.ExecutionEvent
-	orderCh      chan provider.OrderEvent
-	candleCh     chan provider.Candle
+	priceCh        chan provider.PriceEvent
+	executionCh    chan provider.ExecutionEvent
+	orderCh        chan provider.OrderEvent
+	candleCh       chan provider.Candle
 	disconnectedCh chan struct{}
 
 	mu sync.RWMutex
@@ -43,14 +51,14 @@ type SnapshotsRepo interface {
 
 func New(cfg *config.Config, db *pgxpool.Pool, events EventsRepo, snaps SnapshotsRepo) *Binance {
 	return &Binance{
-		cfg:      cfg,
-		db:       db,
-		events:   events,
-		snaps:    snaps,
-		priceCh: make(chan provider.PriceEvent, 100),
-		executionCh: make(chan provider.ExecutionEvent, 10),
-		orderCh: make(chan provider.OrderEvent, 10),
-		candleCh: make(chan provider.Candle, 10),
+		cfg:            cfg,
+		db:             db,
+		events:         events,
+		snaps:          snaps,
+		priceCh:        make(chan provider.PriceEvent, 100),
+		executionCh:    make(chan provider.ExecutionEvent, 10),
+		orderCh:        make(chan provider.OrderEvent, 10),
+		candleCh:       make(chan provider.Candle, 10),
 		disconnectedCh: make(chan struct{}),
 	}
 }
@@ -82,7 +90,6 @@ func (b *Binance) Connect() error {
 	go b.forwardPriceEvents()
 	go b.forwardKlineEvents()
 
-	slog.Info("Binance connected", "testnet", b.cfg.Binance.TestNet)
 	return nil
 }
 
@@ -105,17 +112,15 @@ func (b *Binance) Auth(ctx context.Context) (*provider.AuthResult, error) {
 
 	authStart := time.Now()
 
-	// Fetch account info
 	account, err := b.restClient.GetAccount(false)
 	if err != nil {
 		b.events.Insert(ctx, "auth_fail", map[string]any{"error": err.Error()}, elapsed(authStart))
 		return nil, fmt.Errorf("get account: %w", err)
 	}
 
-	// Calculate total balance in USDT
 	var balance float64
 	for _, bal := range account.Balances {
-		if bal.Asset == "USDT" {
+		if bal.Asset == binanceQuoteCurrency {
 			val, _ := strconv.ParseFloat(bal.Free, 64)
 			balance += val
 			val2, _ := strconv.ParseFloat(bal.Locked, 64)
@@ -128,7 +133,6 @@ func (b *Binance) Auth(ctx context.Context) (*provider.AuthResult, error) {
 		balance = b.cfg.InitialBalance
 	}
 
-	// Check for open orders
 	openOrders, err := b.restClient.GetOpenOrders("")
 	hasOpenPosition := len(openOrders) > 0
 
@@ -137,27 +141,37 @@ func (b *Binance) Auth(ctx context.Context) (*provider.AuthResult, error) {
 		"open_positions": len(openOrders),
 	}, elapsed(authStart))
 
-	// Store snapshot
 	trigger := "startup"
+	accountJSON, _ := json.Marshal(account)
+	accountID := b.cfg.Binance.APIKey[:8]
+	currency := binanceQuoteCurrency
+	brokerName := binanceBrokerName
+	accountMode := binanceAccountMode
+	leverage := binanceLeverage
+
 	b.snaps.Insert(ctx, snapshot.Snapshot{
-		Provider:       "binance",
-		ProviderAcctID: b.cfg.Binance.APIKey[:8] + "...",
-		Balance:        balance,
-		Trigger:        &trigger,
-		SnapshottedAt:  time.Now(),
+		Provider:        "binance",
+		ProviderAcctID:  accountID,
+		Balance:         balance,
+		Currency:        &currency,
+		BrokerName:      &brokerName,
+		AccountMode:     &accountMode,
+		LeverageRatio:   &leverage,
+		ProviderPayload: accountJSON,
+		Trigger:         &trigger,
+		SnapshottedAt:   time.Now(),
 	})
 
 	return &provider.AuthResult{
 		Balance:         balance,
 		HasOpenPosition: hasOpenPosition,
-		AccountID:       b.cfg.Binance.APIKey[:8],
-		Leverage:        1.0,
-		BrokerName:      "Binance",
+		AccountID:       accountID,
+		Leverage:        binanceLeverage,
+		BrokerName:      binanceBrokerName,
 	}, nil
 }
 
 func (b *Binance) Setup() error {
-	slog.Info("Binance setup complete")
 	return nil
 }
 
@@ -177,13 +191,14 @@ func (b *Binance) PlaceMarketOrder(
 	// Convert volume from satoshis to decimal
 	qty := float64(volume) / 100000000
 
-	orderID, err = b.restClient.PlaceMarketOrder("EURUSD", side, qty)
+	slog.Info("placing market order", "symbol", b.cfg.BinanceSymbol, "side", side, "qty", qty)
+	orderID, err = b.restClient.PlaceMarketOrder(b.cfg.BinanceSymbol, side, qty)
 	if err != nil {
-		slog.Error("PlaceMarketOrder failed", "err", err)
+		slog.Error("PlaceMarketOrder failed", "symbol", b.cfg.BinanceSymbol, "err", err)
 		return "", err
 	}
 
-	slog.Info("market order placed", "orderID", orderID, "side", side, "volume", volume)
+	slog.Info("market order placed", "orderID", orderID, "side", side, "volume", volume, "symbol", b.cfg.BinanceSymbol)
 	return orderID, nil
 }
 
@@ -230,7 +245,7 @@ func (b *Binance) FetchAccountInfo(ctx context.Context) (*provider.AccountInfo, 
 
 	var balance float64
 	for _, bal := range account.Balances {
-		if bal.Asset == "USDT" {
+		if bal.Asset == binanceQuoteCurrency {
 			val, _ := strconv.ParseFloat(bal.Free, 64)
 			balance += val
 			break
@@ -240,12 +255,12 @@ func (b *Binance) FetchAccountInfo(ctx context.Context) (*provider.AccountInfo, 
 	return &provider.AccountInfo{
 		AccountID:        b.cfg.Binance.APIKey[:8],
 		Balance:          balance,
-		Leverage:         1.0,
+		Leverage:         binanceLeverage,
 		UsedMargin:       0,
 		FreeMargin:       balance,
 		AvailableBalance: balance,
-		Currency:         "USDT",
-		BrokerName:       "Binance",
+		Currency:         binanceQuoteCurrency,
+		BrokerName:       binanceBrokerName,
 		IsLive:           !b.cfg.Binance.TestNet,
 	}, nil
 }
@@ -409,16 +424,18 @@ func (b *Binance) DisconnectedChan() <-chan struct{} {
 
 func (b *Binance) forwardPriceEvents() {
 	for price := range b.wsClient.PriceChan() {
+		slog.Debug("forwarding binance price", "bid", price.Bid, "ask", price.Ask)
 		select {
 		case b.priceCh <- provider.PriceEvent{
 			Bid:          price.Bid,
 			Ask:          price.Ask,
 			Mid:          (price.Bid + price.Ask) / 2,
-			Symbol:       "EURUSD",
+			Symbol:       b.cfg.BinanceSymbol,
 			ProviderName: "binance",
 			Timestamp:    price.Timestamp,
 		}:
 		default:
+			slog.Warn("binance price channel full, dropping message")
 		}
 	}
 }

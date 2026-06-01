@@ -49,7 +49,6 @@ func (c *Connection) Connect() error {
 		return fmt.Errorf("dial %s: %w", c.host, err)
 	}
 	c.conn = conn
-	slog.Info("connected to cTrader", "host", c.host)
 	go c.readLoop()
 	go c.heartbeatLoop()
 	return nil

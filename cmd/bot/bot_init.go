@@ -22,10 +22,10 @@ type BotInitResult struct {
 	HasOpenPosition bool
 }
 
-// initializeBot sets up the trading bot with all dependencies
 func initializeBot(ctx context.Context, cfg *config.Config, svc *Services, prov provider.Provider, symbol string, symbolUUID string, authResult *provider.AuthResult) *BotInitResult {
 	balance := authResult.Balance
 	hasOpenPosition := authResult.HasOpenPosition
+
 	// Setup risk manager
 	todayLoss, err := svc.Repos.PnLs.Today(ctx, symbolUUID)
 	if err != nil {

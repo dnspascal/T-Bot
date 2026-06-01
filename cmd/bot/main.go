@@ -15,6 +15,7 @@ import (
 )
 
 func main() {
+
 	setupLogging()
 
 	cfg, err := config.Load()
@@ -84,7 +85,6 @@ func main() {
 		slog.Warn("some providers failed setup", "err", err)
 	}
 
-	slog.Info("all providers initialized", "providers", enabledProviders)
 
 	// ============ Start Bot Per Provider ============
 	var wg sync.WaitGroup
@@ -94,11 +94,9 @@ func main() {
 		prov, _ := provMgr.GetProvider("ctrader")
 		authResult := authResults["ctrader"]
 
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			startBotForProvider(ctx, cfg, svc, prov, cfg.CTraderSymbol, authResult, botStart)
-		}()
+		})
 	}
 
 	// Binance bot
@@ -106,19 +104,14 @@ func main() {
 		prov, _ := provMgr.GetProvider("binance")
 		authResult := authResults["binance"]
 
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			startBotForProvider(ctx, cfg, svc, prov, cfg.BinanceSymbol, authResult, botStart)
-		}()
+		})
 	}
 
 	// Wait for all bots to complete
 	wg.Wait()
 	slog.Info("all bots stopped")
-
-	// Keep the process alive indefinitely so background goroutines continue running
-	select {}
 }
 
 func startBotForProvider(
@@ -130,12 +123,19 @@ func startBotForProvider(
 	authResult *provider.AuthResult,
 	botStart time.Time,
 ) {
-	// Load symbol UUID for this provider
+
+	defer func() {
+		if r := recover(); r != nil {
+			slog.Error("bot panic recovered", "provider", prov.Name(), "symbol", symbol, "panic", r)
+		}
+	}()
+
 	symbolUUID, err := svc.Lookup.Get(symbol)
 	if err != nil {
 		slog.Error("get symbol uuid failed", "provider", prov.Name(), "symbol", symbol, "err", err)
 		return
 	}
+
 
 	// Initialize bot with provider-specific symbol
 	botResult := initializeBot(ctx, cfg, svc, prov, symbol, symbolUUID, authResult)

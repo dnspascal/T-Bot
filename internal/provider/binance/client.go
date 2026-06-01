@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 )
 
@@ -18,31 +19,31 @@ const (
 )
 
 type RestClient struct {
-	apiKey    string
-	apiSecret string
-	baseURL   string
+	apiKey     string
+	apiSecret  string
+	baseURL    string
 	httpClient *http.Client
 }
 
 // AccountResponse from Binance API
 type AccountResponse struct {
-	CanTrade   bool    `json:"canTrade"`
-	CanDeposit bool    `json:"canDeposit"`
-	CanWithdraw bool   `json:"canWithdraw"`
-	TotalAssetOfBTC string `json:"totalAssetOfBtc"`
-	MakerCommission int `json:"makerCommission"`
-	TakerCommission int `json:"takerCommission"`
-	BuyerCommission int `json:"buyerCommission"`
-	SellerCommission int `json:"sellerCommission"`
-	CommissionRates struct {
-		Maker string `json:"maker"`
-		Taker string `json:"taker"`
-		Buyer string `json:"buyer"`
+	CanTrade         bool   `json:"canTrade"`
+	CanDeposit       bool   `json:"canDeposit"`
+	CanWithdraw      bool   `json:"canWithdraw"`
+	TotalAssetOfBTC  string `json:"totalAssetOfBtc"`
+	MakerCommission  int    `json:"makerCommission"`
+	TakerCommission  int    `json:"takerCommission"`
+	BuyerCommission  int    `json:"buyerCommission"`
+	SellerCommission int    `json:"sellerCommission"`
+	CommissionRates  struct {
+		Maker  string `json:"maker"`
+		Taker  string `json:"taker"`
+		Buyer  string `json:"buyer"`
 		Seller string `json:"seller"`
 	} `json:"commissionRates"`
 	Balances []struct {
-		Asset string `json:"asset"`
-		Free string `json:"free"`
+		Asset  string `json:"asset"`
+		Free   string `json:"free"`
 		Locked string `json:"locked"`
 	} `json:"balances"`
 	Permissions []string `json:"permissions"`
@@ -50,34 +51,34 @@ type AccountResponse struct {
 
 // OpenOrderResponse from Binance API
 type OpenOrderResponse struct {
-	Symbol string `json:"symbol"`
-	OrderID int64 `json:"orderId"`
-	ClientOrderID string `json:"clientOrderId"`
-	Price string `json:"price"`
-	OrigQty string `json:"origQty"`
-	ExecutedQty string `json:"executedQty"`
+	Symbol              string `json:"symbol"`
+	OrderID             int64  `json:"orderId"`
+	ClientOrderID       string `json:"clientOrderId"`
+	Price               string `json:"price"`
+	OrigQty             string `json:"origQty"`
+	ExecutedQty         string `json:"executedQty"`
 	CummulativeQuoteQty string `json:"cummulativeQuoteQty"`
-	Status string `json:"status"`
-	TimeInForce string `json:"timeInForce"`
-	Type string `json:"type"`
-	Side string `json:"side"`
-	StopPrice string `json:"stopPrice"`
-	Time int64 `json:"time"`
-	UpdateTime int64 `json:"updateTime"`
+	Status              string `json:"status"`
+	TimeInForce         string `json:"timeInForce"`
+	Type                string `json:"type"`
+	Side                string `json:"side"`
+	StopPrice           string `json:"stopPrice"`
+	Time                int64  `json:"time"`
+	UpdateTime          int64  `json:"updateTime"`
 }
 
 // KlineResponse from Binance API
 type KlineResponse struct {
-	OpenTime     int64  `json:"0"`
-	Open         string `json:"1"`
-	High         string `json:"2"`
-	Low          string `json:"3"`
-	Close        string `json:"4"`
-	Volume       string `json:"5"`
-	CloseTime    int64  `json:"6"`
-	QuoteVolume  string `json:"7"`
-	Trades       int64  `json:"8"`
-	TakerBuyBase string `json:"9"`
+	OpenTime      int64  `json:"0"`
+	Open          string `json:"1"`
+	High          string `json:"2"`
+	Low           string `json:"3"`
+	Close         string `json:"4"`
+	Volume        string `json:"5"`
+	CloseTime     int64  `json:"6"`
+	QuoteVolume   string `json:"7"`
+	Trades        int64  `json:"8"`
+	TakerBuyBase  string `json:"9"`
 	TakerBuyQuote string `json:"10"`
 }
 
@@ -87,15 +88,26 @@ func NewRestClient(apiKey, apiSecret string, testnet bool) *RestClient {
 	if testnet {
 		baseURL = testnetBaseURL
 	}
+
+	// Disable HTTP/2 to avoid runtime panics in Go's HTTP/2 client
+	transport := &http.Transport{
+		MaxIdleConns:        100,
+		MaxIdleConnsPerHost: 100,
+		IdleConnTimeout:     90 * time.Second,
+		ForceAttemptHTTP2:   false, // Disable HTTP/2, use HTTP/1.1 only
+	}
+
 	return &RestClient{
-		apiKey:     apiKey,
-		apiSecret:  apiSecret,
-		baseURL:    baseURL,
-		httpClient: &http.Client{Timeout: 10 * time.Second},
+		apiKey:    apiKey,
+		apiSecret: apiSecret,
+		baseURL:   baseURL,
+		httpClient: &http.Client{
+			Timeout:   10 * time.Second,
+			Transport: transport,
+		},
 	}
 }
 
-// GetAccount fetches account information
 func (c *RestClient) GetAccount(useServerTime bool) (*AccountResponse, error) {
 	params := url.Values{}
 	if useServerTime {
@@ -123,8 +135,10 @@ func (c *RestClient) GetAccount(useServerTime bool) (*AccountResponse, error) {
 		return nil, fmt.Errorf("GetAccount failed: %d - %s", resp.StatusCode, string(body))
 	}
 
+	bodyBytes, _ := io.ReadAll(resp.Body)
+
 	var account AccountResponse
-	if err := json.NewDecoder(resp.Body).Decode(&account); err != nil {
+	if err := json.Unmarshal(bodyBytes, &account); err != nil {
 		return nil, fmt.Errorf("decode account response: %w", err)
 	}
 
@@ -196,7 +210,6 @@ func (c *RestClient) GetOpenOrders(symbol string) ([]OpenOrderResponse, error) {
 	return orders, nil
 }
 
-// GetKlines fetches historical klines (candles)
 func (c *RestClient) GetKlines(symbol, interval string, limit int) ([]KlineResponse, error) {
 	params := url.Values{}
 	params.Add("symbol", symbol)
@@ -216,29 +229,28 @@ func (c *RestClient) GetKlines(symbol, interval string, limit int) ([]KlineRespo
 	}
 
 	// Binance returns klines as array of arrays: [[timestamp, open, high, ...]]
-	var rawKlines [][]interface{}
+	var rawKlines [][]any
 	if err := json.NewDecoder(resp.Body).Decode(&rawKlines); err != nil {
 		return nil, fmt.Errorf("decode klines response: %w", err)
 	}
 
-	// Convert raw arrays to KlineResponse structs
 	klines := make([]KlineResponse, len(rawKlines))
 	for i, raw := range rawKlines {
 		if len(raw) < 11 {
 			continue
 		}
 		klines[i] = KlineResponse{
-			OpenTime:       int64(raw[0].(float64)),
-			Open:           fmt.Sprintf("%.8f", raw[1]),
-			High:           fmt.Sprintf("%.8f", raw[2]),
-			Low:            fmt.Sprintf("%.8f", raw[3]),
-			Close:          fmt.Sprintf("%.8f", raw[4]),
-			Volume:         fmt.Sprintf("%.0f", raw[5]),
-			CloseTime:      int64(raw[6].(float64)),
-			QuoteVolume:    fmt.Sprintf("%.0f", raw[7]),
-			Trades:         int64(raw[8].(float64)),
-			TakerBuyBase:   fmt.Sprintf("%.0f", raw[9]),
-			TakerBuyQuote:  fmt.Sprintf("%.0f", raw[10]),
+			OpenTime:      int64(raw[0].(float64)),
+			Open:          fmt.Sprintf("%.8f", raw[1]),
+			High:          fmt.Sprintf("%.8f", raw[2]),
+			Low:           fmt.Sprintf("%.8f", raw[3]),
+			Close:         fmt.Sprintf("%.8f", raw[4]),
+			Volume:        fmt.Sprintf("%.0f", raw[5]),
+			CloseTime:     int64(raw[6].(float64)),
+			QuoteVolume:   fmt.Sprintf("%.0f", raw[7]),
+			Trades:        int64(raw[8].(float64)),
+			TakerBuyBase:  fmt.Sprintf("%.0f", raw[9]),
+			TakerBuyQuote: fmt.Sprintf("%.0f", raw[10]),
 		}
 	}
 
@@ -276,14 +288,13 @@ func (c *RestClient) doRequest(method, path string, params url.Values) (*http.Re
 		return c.httpClient.Do(req)
 	}
 
-	// POST request
-	req, err := http.NewRequest(method, u, nil)
+	// POST request with params in body
+	req, err := http.NewRequest(method, u, strings.NewReader(params.Encode()))
 	if err != nil {
 		return nil, err
 	}
 	req.Header.Set("X-MBX-APIKEY", c.apiKey)
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	req.Body = io.NopCloser(nil)
 
 	return c.httpClient.Do(req)
 }

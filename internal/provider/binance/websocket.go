@@ -107,8 +107,6 @@ func (w *WebSocketClient) Connect() error {
 
 	// Start message reader loop
 	go w.readLoop()
-
-	slog.Info("binance websocket connected", "symbol", symbol)
 	return nil
 }
 
@@ -177,6 +175,7 @@ func (w *WebSocketClient) readLoop() {
 			continue
 		}
 
+		slog.Debug("websocket message received", "msg", string(msg))
 		w.processMessage(msg)
 	}
 }
@@ -188,14 +187,17 @@ func (w *WebSocketClient) processMessage(data []byte) {
 		return
 	}
 
-	eventType, ok := msg["e"].(string)
-	if !ok {
+	// Check event type: bookTicker messages have no "e" field, kline and trade have "e" field
+	eventType, hasEventType := msg["e"].(string)
+	if !hasEventType {
+		// No "e" field means this is likely a bookTicker message
+		if _, hasBid := msg["b"]; hasBid {
+			w.processBookTicker(msg)
+		}
 		return
 	}
 
 	switch eventType {
-	case "bookTicker":
-		w.processBookTicker(msg)
 	case "kline":
 		w.processKline(msg)
 	case "trade":
@@ -210,8 +212,11 @@ func (w *WebSocketClient) processBookTicker(msg map[string]interface{}) {
 	asks, asksOk := toFloat64(msg["A"])
 
 	if !bidOk || !bidsOk || !askOk || !asksOk {
+		slog.Debug("bookTicker missing fields", "bidOk", bidOk, "bidsOk", bidsOk, "askOk", askOk, "asksOk", asksOk)
 		return
 	}
+
+	slog.Debug("binance price received", "bid", bid, "ask", ask)
 
 	price := PriceData{
 		Bid:       bid,
@@ -224,7 +229,7 @@ func (w *WebSocketClient) processBookTicker(msg map[string]interface{}) {
 	select {
 	case w.priceCh <- price:
 	default:
-		// Channel full, drop message
+		slog.Warn("price channel full, dropping message")
 	}
 }
 

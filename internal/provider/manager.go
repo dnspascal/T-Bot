@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"sync"
+	"maps"
 )
 
 type Manager struct {
@@ -27,7 +28,6 @@ func (m *Manager) Register(name string, prov Provider) error {
 	}
 
 	m.providers[name] = prov
-	slog.Info("provider registered", "name", name)
 	return nil
 }
 
@@ -53,15 +53,10 @@ func (m *Manager) ListProviders() []string {
 	return names
 }
 
-// AuthAllProviders authenticates all registered providers in parallel
 func (m *Manager) AuthAllProviders(ctx context.Context) (map[string]*AuthResult, error) {
 	m.mu.RLock()
-	providers := make([]Provider, 0, len(m.providers))
-	providerNames := make([]string, 0, len(m.providers))
-	for name, prov := range m.providers {
-		providers = append(providers, prov)
-		providerNames = append(providerNames, name)
-	}
+	providersCopy := make(map[string]Provider)
+	maps.Copy(providersCopy, m.providers)
 	m.mu.RUnlock()
 
 	results := make(map[string]*AuthResult)
@@ -69,12 +64,16 @@ func (m *Manager) AuthAllProviders(ctx context.Context) (map[string]*AuthResult,
 		name   string
 		result *AuthResult
 		err    error
-	}, len(providers))
+	}, len(providersCopy))
 
 	var wg sync.WaitGroup
-	for i, prov := range providers {
+	for name, prov := range providersCopy {
+		if prov.Name() == "ctrader" {
+			continue
+		}
+
 		wg.Add(1)
-		go func(idx int, p Provider) {
+		go func(name string, p Provider) {
 			defer wg.Done()
 			result, err := p.Auth(ctx)
 			resultsCh <- struct {
@@ -82,11 +81,11 @@ func (m *Manager) AuthAllProviders(ctx context.Context) (map[string]*AuthResult,
 				result *AuthResult
 				err    error
 			}{
-				name:   providerNames[idx],
+				name:   name,
 				result: result,
 				err:    err,
 			}
-		}(i, prov)
+		}(name, prov)
 	}
 
 	go func() {
@@ -101,7 +100,6 @@ func (m *Manager) AuthAllProviders(ctx context.Context) (map[string]*AuthResult,
 			slog.Error("provider auth failed", "name", res.name, "err", res.err)
 		} else {
 			results[res.name] = res.result
-			slog.Info("provider authenticated", "name", res.name, "balance", res.result.Balance)
 		}
 	}
 
@@ -112,13 +110,11 @@ func (m *Manager) AuthAllProviders(ctx context.Context) (map[string]*AuthResult,
 	return results, nil
 }
 
-// SetupAllProviders calls Setup on all registered providers in parallel
 func (m *Manager) SetupAllProviders(ctx context.Context) error {
+
 	m.mu.RLock()
 	providers := make(map[string]Provider)
-	for name, prov := range m.providers {
-		providers[name] = prov
-	}
+	maps.Copy(providers, m.providers)
 	m.mu.RUnlock()
 
 	setupCh := make(chan struct {
@@ -214,9 +210,7 @@ func (m *Manager) PlaceOrderAcrossProviders(
 ) (map[string]string, error) {
 	m.mu.RLock()
 	providers := make(map[string]Provider)
-	for name, prov := range m.providers {
-		providers[name] = prov
-	}
+	maps.Copy(providers, m.providers)
 	m.mu.RUnlock()
 
 	orderIDsCh := make(chan struct {
@@ -271,9 +265,7 @@ func (m *Manager) PlaceOrderAcrossProviders(
 func (m *Manager) FetchAccountInfoAcrossProviders(ctx context.Context) (map[string]*AccountInfo, error) {
 	m.mu.RLock()
 	providers := make(map[string]Provider)
-	for name, prov := range m.providers {
-		providers[name] = prov
-	}
+	maps.Copy(providers, m.providers)
 	m.mu.RUnlock()
 
 	accountInfoCh := make(chan struct {
