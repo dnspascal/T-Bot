@@ -1,16 +1,13 @@
 package indicator
 
-// CalculateRSI computes Wilder's Relative Strength Index from price series.
-// Pure function - no state, no timeframe knowledge, just math.
-// Returns 50 (neutral) if not enough prices for the period.
+
 func CalculateRSI(prices []float64, period int) float64 {
 	if len(prices) < period+1 {
-		return 50  // Not ready, neutral
+		return 50  
 	}
 
 	var sumGain, sumLoss float64
 
-	// Calculate gains/losses for first `period` price changes
 	for i := 1; i <= period; i++ {
 		change := prices[i] - prices[i-1]
 		if change >= 0 {
@@ -23,7 +20,6 @@ func CalculateRSI(prices []float64, period int) float64 {
 	avgGain := sumGain / float64(period)
 	avgLoss := sumLoss / float64(period)
 
-	// Apply Wilder's smoothing for remaining prices
 	for i := period + 1; i < len(prices); i++ {
 		change := prices[i] - prices[i-1]
 		var gain, loss float64

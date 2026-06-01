@@ -1,11 +1,10 @@
 package indicator
 
-// MarketState represents calculated indicators for a timeframe
 type MarketState struct {
 	SymbolID  string
 	Provider  string
-	Period    string  // M5, M15, M30, H1, H4, D1
-	BarTime   int64   // Unix timestamp when bar opened
+	Period    string  
+	BarTime   int64   
 
 	// OHLCV
 	Open      float64
@@ -79,14 +78,11 @@ func (c *Calculator) Calculate(
 		ATR:        CalculateATR(allOHLC, c.atrPeriod),
 	}
 
-	// Indicators are ready when we have at least the longest period (21 for EMA slow)
 	ms.IsWarmedUp = len(allCloses) >= c.emaSlowPeriod
 
 	return ms
 }
 
-// CalculateFromHistory calculates indicators from historical candles only
-// Used for warmup: load 50 historical candles, calculate each point
 func (c *Calculator) CalculateFromHistory(
 	symbolID, provider, period string,
 	barTime int64,
@@ -95,9 +91,7 @@ func (c *Calculator) CalculateFromHistory(
 	historicalCloses []float64,
 	historicalOHLC []OHLC,
 ) MarketState {
-	// For history, use the closes/OHLC up to (but not including) this candle
-	// This prevents lookahead bias
-
+	
 	ms := MarketState{
 		SymbolID:   symbolID,
 		Provider:   provider,
