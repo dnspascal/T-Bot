@@ -89,7 +89,8 @@ func NewWebSocketClient(symbol, period string, testnet bool) *WebSocketClient {
 }
 
 func (w *WebSocketClient) Connect() error {
-	symbol := w.symbol
+	// Binance WebSocket requires lowercase symbols
+	symbol := strings.ToLower(w.symbol)
 
 	intervals := config.BinanceIntervals()
 	var klineStreams strings.Builder
@@ -100,17 +101,23 @@ func (w *WebSocketClient) Connect() error {
 		fmt.Fprintf(&klineStreams, "%s@kline_%s", symbol, interval)
 	}
 
-	wsURL := fmt.Sprintf("%s/%s@bookTicker/%s/%s@trade",
-		w.baseURL,
+	// Remove /ws from baseURL since /stream?streams= is the multi-stream endpoint
+	baseURLWithoutWs := strings.TrimSuffix(w.baseURL, "/ws")
+	wsURL := fmt.Sprintf("%s/stream?streams=%s@bookTicker/%s/%s@trade",
+		baseURLWithoutWs,
 		symbol,
 		klineStreams.String(),
 		symbol,
 	)
 
+	slog.Info("connecting to websocket", "url", wsURL)
+
 	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
 	if err != nil {
 		return fmt.Errorf("websocket dial: %w", err)
 	}
+
+	slog.Info("websocket connected successfully")
 
 	w.mu.Lock()
 	w.conn = conn
@@ -158,9 +165,12 @@ func (w *WebSocketClient) readLoop() {
 	defer close(w.klineCh)
 	defer close(w.tradeCh)
 
+	slog.Info("websocket read loop started")
+
 	for {
 		select {
 		case <-w.ctx.Done():
+			slog.Info("websocket context cancelled, exiting read loop")
 			return
 		default:
 		}
@@ -170,6 +180,7 @@ func (w *WebSocketClient) readLoop() {
 		w.mu.RUnlock()
 
 		if conn == nil {
+			slog.Warn("websocket connection is nil, exiting read loop")
 			return
 		}
 
@@ -180,16 +191,35 @@ func (w *WebSocketClient) readLoop() {
 			return  // Exit on any error - don't retry dead connection
 		}
 
-		slog.Debug("websocket message received", "msg", string(msg))
+		slog.Info("websocket message received", "msg", string(msg))
 		w.processMessage(msg)
 	}
 }
 
 func (w *WebSocketClient) processMessage(data []byte) {
-	var msg map[string]interface{}
-	if err := json.Unmarshal(data, &msg); err != nil {
+	var wrapper map[string]interface{}
+	if err := json.Unmarshal(data, &wrapper); err != nil {
 		slog.Debug("failed to unmarshal message", "err", err)
 		return
+	}
+
+	// Multi-stream messages are wrapped with stream name and data
+	// {"stream":"btcusdt@kline_5m","data":{...}}
+	var msg map[string]interface{}
+	if rawData, hasData := wrapper["data"]; hasData {
+		// This is a wrapped multi-stream message
+		dataBytes, err := json.Marshal(rawData)
+		if err != nil {
+			slog.Debug("failed to marshal unwrapped data", "err", err)
+			return
+		}
+		if err := json.Unmarshal(dataBytes, &msg); err != nil {
+			slog.Debug("failed to unmarshal unwrapped data", "err", err)
+			return
+		}
+	} else {
+		// Direct message (shouldn't happen with /stream endpoint, but handle it)
+		msg = wrapper
 	}
 
 	// Check event type: bookTicker messages have no "e" field, kline and trade have "e" field
@@ -221,7 +251,7 @@ func (w *WebSocketClient) processBookTicker(msg map[string]interface{}) {
 		return
 	}
 
-	slog.Debug("binance price received", "bid", bid, "ask", ask)
+	slog.Info("price tick", "bid", bid, "bidSize", bids, "ask", ask, "askSize", asks)
 
 	price := PriceData{
 		Bid:       bid,
@@ -244,6 +274,12 @@ func (w *WebSocketClient) processKline(msg map[string]interface{}) {
 		return
 	}
 
+	// Only process closed candles (x: true). Intermediate updates (x: false) are redundant with price ticks
+	isClosed, _ := k["x"].(bool)
+	if !isClosed {
+		return  // Ignore intermediate candle updates
+	}
+
 	symbol, _ := toString(msg["s"])
 	interval, _ := toString(k["i"])
 	openTime, _ := toInt64(k["t"])
@@ -253,6 +289,8 @@ func (w *WebSocketClient) processKline(msg map[string]interface{}) {
 	close, _ := toFloat64(k["c"])
 	volume, _ := toFloat64(k["v"])
 	closeTime, _ := toInt64(k["T"])
+
+	slog.Info("candle closed", "symbol", symbol, "period", interval, "open", open, "high", high, "low", low, "close", close)
 
 	kline := KlineData{
 		Symbol:    symbol,

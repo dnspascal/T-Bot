@@ -35,7 +35,6 @@ func (w *Warmer) WarmupAllTimeframes(ctx context.Context, symbol, symbolUUID str
 			slog.Error("warmup failed", "period", periodName, "err", err)
 			return fmt.Errorf("warmup %s: %w", periodName, err)
 		}
-		slog.Info("warmup complete", "period", periodName)
 	}
 
 	slog.Info("all timeframes warmed up", "count", len(periods))

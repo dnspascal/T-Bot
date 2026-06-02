@@ -50,6 +50,7 @@ type SnapshotsRepo interface {
 }
 
 func New(cfg *config.Config, db *pgxpool.Pool, events EventsRepo, snaps SnapshotsRepo) *Binance {
+	slog.Info("binance provider created")
 	return &Binance{
 		cfg:            cfg,
 		db:             db,
@@ -64,6 +65,8 @@ func New(cfg *config.Config, db *pgxpool.Pool, events EventsRepo, snaps Snapshot
 }
 
 func (b *Binance) Connect() error {
+	slog.Info("binance provider connecting")
+
 	if b.cfg.Binance == nil || b.cfg.Binance.APIKey == "" {
 		return fmt.Errorf("Binance API key not configured")
 	}
