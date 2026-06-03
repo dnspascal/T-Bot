@@ -6,13 +6,10 @@ import (
 	"fmt"
 	"log/slog"
 	"strconv"
-	"sync"
 	"time"
 
 	"github.com/denismgaya/t-bot/internal/candle"
 	"github.com/denismgaya/t-bot/internal/config"
-	"github.com/denismgaya/t-bot/internal/indicator"
-	"github.com/denismgaya/t-bot/internal/marketstate"
 	"github.com/denismgaya/t-bot/internal/provider"
 	"github.com/denismgaya/t-bot/internal/snapshot"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -26,27 +23,21 @@ const (
 )
 
 type Binance struct {
-	cfg    *config.Config
-	db     *pgxpool.Pool
-	events EventsRepo
-	snaps  SnapshotsRepo
-	states MarketStatesRepo
+	cfg     *config.Config
+	db      *pgxpool.Pool
+	events  EventsRepo
+	snaps   SnapshotsRepo
 	candles CandlesRepo
-	lookup Lookup
+	lookup  Lookup
 
 	restClient *RestClient
 	wsClient   *WebSocketClient
 
-	indicatorStates map[string]*IndicatorState
-
-	// Event channels
 	priceCh        chan provider.PriceEvent
 	executionCh    chan provider.ExecutionEvent
 	orderCh        chan provider.OrderEvent
 	candleCh       chan provider.Candle
 	disconnectedCh chan struct{}
-
-	mu sync.RWMutex
 }
 
 type EventsRepo interface {
@@ -57,11 +48,6 @@ type SnapshotsRepo interface {
 	Insert(context.Context, snapshot.Snapshot) error
 }
 
-type MarketStatesRepo interface {
-	GetLastCandles(ctx context.Context, symbol, timeframe string, limit int) ([]marketstate.CandleRow, error)
-	Insert(ctx context.Context, state indicator.MarketState) error
-}
-
 type CandlesRepo interface {
 	Upsert(ctx context.Context, c candle.Candle) error
 }
@@ -70,34 +56,29 @@ type Lookup interface {
 	Get(symbol string) (string, error)
 }
 
-func New(cfg *config.Config, db *pgxpool.Pool, events EventsRepo, snaps SnapshotsRepo, states MarketStatesRepo, candles CandlesRepo, lookup Lookup) *Binance {
+func New(cfg *config.Config, db *pgxpool.Pool, events EventsRepo, snaps SnapshotsRepo, candles CandlesRepo, lookup Lookup) *Binance {
 	slog.Info("binance provider created")
 	return &Binance{
-		cfg:              cfg,
-		db:               db,
-		events:           events,
-		snaps:            snaps,
-		states:           states,
-		candles:          candles,
-		lookup:           lookup,
-		indicatorStates:  make(map[string]*IndicatorState),
-		priceCh:          make(chan provider.PriceEvent, 100),
-		executionCh:      make(chan provider.ExecutionEvent, 10),
-		orderCh:          make(chan provider.OrderEvent, 10),
-		candleCh:         make(chan provider.Candle, 10),
-		disconnectedCh:   make(chan struct{}),
+		cfg:            cfg,
+		db:             db,
+		events:         events,
+		snaps:          snaps,
+		candles:        candles,
+		lookup:         lookup,
+		priceCh:        make(chan provider.PriceEvent, 100),
+		executionCh:    make(chan provider.ExecutionEvent, 10),
+		orderCh:        make(chan provider.OrderEvent, 10),
+		candleCh:       make(chan provider.Candle, 10),
+		disconnectedCh: make(chan struct{}),
 	}
 }
 
 func (b *Binance) Connect() error {
 	slog.Info("binance provider connecting")
-
 	if b.cfg.Binance == nil || b.cfg.Binance.APIKey == "" {
 		return fmt.Errorf("Binance API key not configured")
 	}
-
 	b.restClient = NewRestClient(b.cfg.Binance.APIKey, b.cfg.Binance.APISecret, b.cfg.Binance.TestNet)
-
 	valid, err := b.restClient.ValidateAPIKey()
 	if err != nil {
 		return fmt.Errorf("API key validation failed: %w", err)
@@ -105,105 +86,20 @@ func (b *Binance) Connect() error {
 	if !valid {
 		return fmt.Errorf("API key invalid or insufficient permissions")
 	}
+	return nil
+}
 
-	// BLOCKING: Fetch 30 historical candles per timeframe and initialize indicator states
-	if err := b.initializeIndicatorStates(); err != nil {
-		return fmt.Errorf("initialize indicator states: %w", err)
-	}
-
+func (b *Binance) StartStreaming() error {
 	b.wsClient = NewWebSocketClient(b.cfg.BinanceSymbol, b.cfg.Period, b.cfg.Binance.TestNet)
 	if err := b.wsClient.Connect(); err != nil {
 		return fmt.Errorf("websocket connect: %w", err)
 	}
-
 	go b.forwardPriceEvents()
 	go b.forwardKlineEvents()
-
+	slog.Info("binance streaming started")
 	return nil
 }
 
-func (b *Binance) initializeIndicatorStates() error {
-	symbolUUID, err := b.lookup.Get(b.cfg.BinanceSymbol)
-	if err != nil {
-		return fmt.Errorf("lookup symbol uuid: %w", err)
-	}
-
-	timeframes := config.BinanceIntervals()
-
-	for _, tf := range timeframes {
-		startTime := time.Now()
-
-		candles, err := b.restClient.GetKlines(b.cfg.BinanceSymbol, tf, 30)
-		if err != nil {
-			return fmt.Errorf("fetch klines for %s: %w", tf, err)
-		}
-
-		if len(candles) == 0 {
-			slog.Warn("no candles fetched", "timeframe", tf)
-			continue
-		}
-
-		state := NewIndicatorState(tf)
-
-		for _, k := range candles {
-			open, _ := strconv.ParseFloat(k.Open, 64)
-			high, _ := strconv.ParseFloat(k.High, 64)
-			low, _ := strconv.ParseFloat(k.Low, 64)
-			close, _ := strconv.ParseFloat(k.Close, 64)
-			volumeFloat, _ := strconv.ParseFloat(k.Volume, 64)
-
-			state.AddCandle(open, high, low, close, volumeFloat)
-		}
-
-		b.mu.Lock()
-		b.indicatorStates[tf] = state
-		b.mu.Unlock()
-
-		slog.Info("indicator state initialized",
-			"timeframe", tf,
-			"candles", len(candles),
-			"ema9", state.EMA9.Value(),
-			"ema21", state.EMA21.Value(),
-			"rsi", state.RSI.Value(),
-			"atr", state.ATR.Value())
-
-		// Store ONE market_states row with final warmed-up indicators
-		lastCandle := candles[len(candles)-1]
-		lastOpen, _ := strconv.ParseFloat(lastCandle.Open, 64)
-		lastHigh, _ := strconv.ParseFloat(lastCandle.High, 64)
-		lastLow, _ := strconv.ParseFloat(lastCandle.Low, 64)
-		lastClose, _ := strconv.ParseFloat(lastCandle.Close, 64)
-		lastVolumeFloat, _ := strconv.ParseFloat(lastCandle.Volume, 64)
-		lastVolume := int64(lastVolumeFloat)
-		processingMs := time.Since(startTime).Milliseconds()
-
-		marketState := indicator.MarketState{
-			SymbolID:     symbolUUID,
-			Provider:     "binance",
-			Period:       tf,
-			BarTime:      lastCandle.OpenTime, // Keep as milliseconds for database
-			Open:         lastOpen,
-			High:         lastHigh,
-			Low:          lastLow,
-			Close:        lastClose,
-			Volume:       lastVolume,
-			ProcessingMS: processingMs,
-			EMAFast:      state.EMA9.Value(),
-			EMASlow:      state.EMA21.Value(),
-			RSI:          state.RSI.Value(),
-			ADX:          state.ADX.Value(),
-			ATR:          state.ATR.Value(),
-		}
-
-		slog.Info("inserting warm-up state", "timeframe", tf, "barTime", marketState.BarTime, "open", marketState.Open, "close", marketState.Close)
-
-		if err := b.states.Insert(context.Background(), marketState); err != nil {
-			slog.Warn("failed to insert market state after warm-up", "timeframe", tf, "err", err)
-		}
-	}
-
-	return nil
-}
 
 func (b *Binance) Close() error {
 	if b.wsClient != nil {
@@ -554,29 +450,13 @@ func (b *Binance) forwardPriceEvents() {
 
 func (b *Binance) forwardKlineEvents() {
 	for kline := range b.wsClient.KlineChan() {
-		// Get indicator state for this timeframe
-		b.mu.RLock()
-		state, exists := b.indicatorStates[kline.Interval]
-		b.mu.RUnlock()
-
-		if !exists {
-			slog.Warn("no indicator state for timeframe", "timeframe", kline.Interval)
-			continue
-		}
-
-		// Look up symbol UUID for database storage
 		symbolUUID, err := b.lookup.Get(b.cfg.BinanceSymbol)
 		if err != nil {
 			slog.Warn("failed to lookup symbol UUID", "symbol", kline.Symbol, "err", err)
 			continue
 		}
 
-		// Update indicator state with new candle (in-memory calculation)
-		state.AddCandle(kline.Open, kline.High, kline.Low, kline.Close, kline.Volume)
-
-		startTime := time.Now()
-
-		c := candle.Candle{
+		if err := b.candles.Upsert(context.Background(), candle.Candle{
 			SymbolID:   symbolUUID,
 			Period:     kline.Interval,
 			Open:       kline.Open,
@@ -586,35 +466,17 @@ func (b *Binance) forwardKlineEvents() {
 			TickVolume: kline.TradeCount,
 			BarTime:    time.UnixMilli(kline.OpenTime),
 			ReceivedAt: time.Now(),
-		}
-		if err := b.candles.Upsert(context.Background(), c); err != nil {
+		}); err != nil {
 			slog.Warn("failed to insert candle", "symbol", kline.Symbol, "timeframe", kline.Interval, "err", err)
 		}
 
-		marketState := indicator.MarketState{
-			SymbolID:     symbolUUID,
-			Provider:     "binance",
-			Period:       kline.Interval,
-			BarTime:      kline.OpenTime,
-			ProcessingMS: time.Since(startTime).Milliseconds(),
-			Open:         kline.Open,
-			High:         kline.High,
-			Low:          kline.Low,
-			Close:        kline.Close,
-			Volume:       kline.TradeCount,
-			EMAFast:      state.EMA9.Value(),
-			EMASlow:      state.EMA21.Value(),
-			RSI:          state.RSI.Value(),
-			ADX:          state.ADX.Value(),
-			ATR:          state.ATR.Value(),
-		}
+		slog.Info("candle received",
+			"symbol", kline.Symbol,
+			"timeframe", kline.Interval,
+			"close", kline.Close)
 
-		if err := b.states.Insert(context.Background(), marketState); err != nil {
-			slog.Warn("failed to insert market state", "symbol", kline.Symbol, "timeframe", kline.Interval, "err", err)
-		}
-
-		// Create candle with calculated indicators
-		candle := provider.Candle{
+		select {
+		case b.candleCh <- provider.Candle{
 			Symbol:    kline.Symbol,
 			Timeframe: intervalToTimeframe(kline.Interval),
 			OpenTime:  kline.OpenTime / 1000,
@@ -623,21 +485,7 @@ func (b *Binance) forwardKlineEvents() {
 			Low:       kline.Low,
 			Close:     kline.Close,
 			Volume:    int64(kline.Volume),
-		}
-
-		// Log candle with indicators
-		slog.Info("candle with indicators",
-			"symbol", kline.Symbol,
-			"timeframe", kline.Interval,
-			"close", kline.Close,
-			"ema9", state.EMA9.Value(),
-			"ema21", state.EMA21.Value(),
-			"rsi", state.RSI.Value(),
-			"atr", state.ATR.Value())
-
-		// Forward to candle channel
-		select {
-		case b.candleCh <- candle:
+		}:
 		default:
 			slog.Warn("candle channel full, dropping message")
 		}

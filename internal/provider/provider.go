@@ -122,6 +122,7 @@ type Provider interface {
 	Auth(ctx context.Context) (*AuthResult, error)
 	Setup() error
 	Connect() error
+	StartStreaming() error
 	Close() error
 	Name() string
 

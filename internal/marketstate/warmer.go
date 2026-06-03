@@ -5,86 +5,62 @@ import (
 	"fmt"
 	"log/slog"
 
-	"github.com/denismgaya/t-bot/internal/indicator"
+	"github.com/denismgaya/t-bot/internal/config"
 	"github.com/denismgaya/t-bot/internal/provider"
 )
 
+// Warmer pre-seeds the ProcessorManager with historical candles before live streaming starts.
+// Must complete before StartStreaming() is called — the caller is responsible for that ordering.
 type Warmer struct {
 	prov            provider.Provider
-	repo            Repository
-	calculator      *indicator.Calculator
-	providerName    string
+	processorMgr    *ProcessorManager
 	historicalCount int
 }
 
-func NewWarmer(prov provider.Provider, repo Repository, providerName string, historicalCount int) *Warmer {
+func NewWarmer(prov provider.Provider, processorMgr *ProcessorManager, historicalCount int) *Warmer {
 	return &Warmer{
 		prov:            prov,
-		repo:            repo,
-		calculator:      indicator.NewCalculator(),
-		providerName:    providerName,
+		processorMgr:    processorMgr,
 		historicalCount: historicalCount,
 	}
 }
 
-func (w *Warmer) WarmupAllTimeframes(ctx context.Context, symbol, symbolUUID string) error {
-	periods := []string{"M5", "M15", "M30", "H1", "H4", "D1"}
-
-	for _, periodName := range periods {
-		if err := w.warmupTimeframe(ctx, symbol, symbolUUID, periodName); err != nil {
-			slog.Error("warmup failed", "period", periodName, "err", err)
-			return fmt.Errorf("warmup %s: %w", periodName, err)
+func (w *Warmer) WarmupAllTimeframes(ctx context.Context, symbol string) error {
+	for _, period := range config.TradingPeriods {
+		if err := w.warmupTimeframe(ctx, symbol, period); err != nil {
+			return fmt.Errorf("warmup %s: %w", period, err)
 		}
 	}
-
-	slog.Info("all timeframes warmed up", "count", len(periods))
+	slog.Info("all timeframes warmed up", "symbol", symbol, "timeframes", len(config.TradingPeriods))
 	return nil
 }
 
-func (w *Warmer) warmupTimeframe(ctx context.Context, symbol, symbolUUID, periodName string) error {
-	candles, err := w.prov.FetchHistoricalCandles(ctx, symbol, periodName, w.historicalCount)
+func (w *Warmer) warmupTimeframe(ctx context.Context, symbol, period string) error {
+	candles, err := w.prov.FetchHistoricalCandles(ctx, symbol, period, w.historicalCount)
 	if err != nil {
-		return fmt.Errorf("fetch historical %s: %w", periodName, err)
+		return fmt.Errorf("fetch historical: %w", err)
 	}
-
 	if len(candles) == 0 {
-		return fmt.Errorf("no historical candles returned for %s", periodName)
+		return fmt.Errorf("no historical candles returned")
 	}
-
-	slog.Info("loaded historical candles", "period", periodName, "count", len(candles))
-
-	var closes []float64
-	var ohlcData []indicator.OHLC
 
 	for _, c := range candles {
-		closes = append(closes, c.Close)
-		ohlcData = append(ohlcData, indicator.OHLC{
-			High:  c.High,
-			Low:   c.Low,
-			Close: c.Close,
-		})
+		w.processorMgr.WarmCandle(period, c.OpenTime, c.Open, c.High, c.Low, c.Close, c.Volume)
 	}
 
-	for i, candle := range candles {
-		marketState := w.calculator.Calculate(
-			symbolUUID,
-			w.providerName,
-			periodName,
-			candle.OpenTime,
-			candle.Open,
-			candle.High,
-			candle.Low,
-			candle.Close,
-			candle.Volume,
-			closes[:i],    // historical only — Calculate appends current candle
-			ohlcData[:i],
+	if err := w.processorMgr.CommitWarmup(ctx, period); err != nil {
+		slog.Warn("failed to commit warm-up state", "period", period, "err", err)
+	}
+
+	states := w.processorMgr.GetAllStates()
+	if s, ok := states[period]; ok {
+		slog.Info("timeframe warmed up",
+			"period", period,
+			"candles", len(candles),
+			"isReady", s.IsWarmedUp,
+			"ema9", s.EMAFast,
+			"ema21", s.EMASlow,
 		)
-
-		if err := w.repo.Insert(ctx, marketState); err != nil {
-			return fmt.Errorf("insert market state: %w", err)
-		}
 	}
-
-	slog.Info("stored market states", "period", periodName, "count", len(candles))
 	return nil
 }

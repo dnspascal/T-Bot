@@ -7,8 +7,6 @@ import (
 	"github.com/denismgaya/t-bot/internal/indicator"
 )
 
-// Processor calculates and stores market states for live candles
-// One instance per timeframe
 type Processor struct {
 	symbolID   string
 	provider   string
@@ -33,19 +31,38 @@ func NewProcessor(
 	}
 }
 
-// ProcessCandle calculates indicators and stores market state for a new candle.
-func (p *Processor) ProcessCandle(ctx context.Context, openTime int64, open, high, low, close float64, volume int64) (indicator.MarketState, error) {
+func (p *Processor) WarmCandle(openTime int64, open, high, low, close float64, volume int64) {
+	historical := p.buffer.Closes()
+	historicalOHLC := p.buffer.OHLC()
 	p.buffer.AddCandle(open, high, low, close, volume)
-
-	marketState := p.calculator.Calculate(
-		p.symbolID,
-		p.provider,
-		p.period,
+	p.calculator.Calculate(
+		p.symbolID, p.provider, p.period,
 		openTime,
 		open, high, low, close,
 		volume,
-		p.buffer.Closes(),
-		p.buffer.OHLC(),
+		historical,
+		historicalOHLC,
+	)
+}
+
+func (p *Processor) Commit(ctx context.Context) error {
+	return p.repo.Insert(ctx, p.calculator.LastState())
+}
+
+// ProcessCandle calculates indicators for a live candle and stores it.
+func (p *Processor) ProcessCandle(ctx context.Context, openTime int64, open, high, low, close float64, volume int64) (indicator.MarketState, error) {
+	// Capture historical BEFORE adding current — Calculator appends current internally.
+	historical := p.buffer.Closes()
+	historicalOHLC := p.buffer.OHLC()
+	p.buffer.AddCandle(open, high, low, close, volume)
+
+	marketState := p.calculator.Calculate(
+		p.symbolID, p.provider, p.period,
+		openTime,
+		open, high, low, close,
+		volume,
+		historical,
+		historicalOHLC,
 	)
 
 	if err := p.repo.Insert(ctx, marketState); err != nil {
@@ -61,14 +78,14 @@ func (p *Processor) State() indicator.MarketState {
 	return p.calculator.LastState()
 }
 
-// IsWarmedUp returns true if this processor has enough data for indicators
+// IsWarmedUp returns true if this processor has enough data for all indicators.
 func (p *Processor) IsWarmedUp() bool {
 	return p.buffer.IsWarmedUp()
 }
 
-// ProcessorManager manages market state processors for all timeframes
+// ProcessorManager manages processors for all timeframes of one symbol.
 type ProcessorManager struct {
-	processors map[string]*Processor  // key: period (M5, H1, etc.)
+	processors map[string]*Processor
 	symbolID   string
 	provider   string
 	repo       Repository
@@ -83,12 +100,27 @@ func NewProcessorManager(symbolID, provider string, repo Repository) *ProcessorM
 	}
 }
 
-// AddProcessor registers a processor for a timeframe
 func (m *ProcessorManager) AddProcessor(period string, processor *Processor) {
 	m.processors[period] = processor
 }
 
-// ProcessCandle routes a candle to the matching processor and returns its market state.
+// WarmCandle advances a timeframe's state without writing to DB.
+func (m *ProcessorManager) WarmCandle(period string, openTime int64, open, high, low, close float64, volume int64) {
+	if p, ok := m.processors[period]; ok {
+		p.WarmCandle(openTime, open, high, low, close, volume)
+	}
+}
+
+// CommitWarmup inserts the final warm-up state for a timeframe — one row per timeframe.
+func (m *ProcessorManager) CommitWarmup(ctx context.Context, period string) error {
+	p, ok := m.processors[period]
+	if !ok {
+		return nil
+	}
+	return p.Commit(ctx)
+}
+
+// ProcessCandle routes a live candle to its processor and returns the new market state.
 func (m *ProcessorManager) ProcessCandle(ctx context.Context, period string, openTime int64, open, high, low, close float64, volume int64) (map[string]indicator.MarketState, error) {
 	results := make(map[string]indicator.MarketState)
 
@@ -106,7 +138,7 @@ func (m *ProcessorManager) ProcessCandle(ctx context.Context, period string, ope
 	return results, nil
 }
 
-// GetAllStates returns current market states for all timeframes
+// GetAllStates returns the last calculated state for every timeframe.
 func (m *ProcessorManager) GetAllStates() map[string]indicator.MarketState {
 	states := make(map[string]indicator.MarketState)
 	for period, processor := range m.processors {
@@ -115,7 +147,7 @@ func (m *ProcessorManager) GetAllStates() map[string]indicator.MarketState {
 	return states
 }
 
-// AllWarmedUp returns true if all processors have enough data
+// AllWarmedUp returns true when every registered processor has enough data.
 func (m *ProcessorManager) AllWarmedUp() bool {
 	for _, processor := range m.processors {
 		if !processor.IsWarmedUp() {

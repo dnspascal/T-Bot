@@ -46,6 +46,10 @@ func (c *CTrader) Connect() error {
 	return c.client.Connect()
 }
 
+func (c *CTrader) StartStreaming() error {
+	return nil
+}
+
 func (c *CTrader) Close() error {
 	c.client.Close()
 	return nil

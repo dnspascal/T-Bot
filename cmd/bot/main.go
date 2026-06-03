@@ -9,6 +9,7 @@ import (
 
 	"github.com/denismgaya/t-bot/internal/api"
 	"github.com/denismgaya/t-bot/internal/config"
+	"github.com/denismgaya/t-bot/internal/marketstate"
 	"github.com/denismgaya/t-bot/internal/provider"
 	"github.com/denismgaya/t-bot/internal/provider/binance"
 	"github.com/denismgaya/t-bot/internal/provider/ctrader"
@@ -58,7 +59,7 @@ func main() {
 	if cfg.EnableBinance {
 		enabledProviders = append(enabledProviders, "binance")
 
-		binanceProv := binance.New(cfg, svc.DB.Pool, svc.Repos.Events, svc.Repos.Snapshots, svc.Repos.MarketState, svc.Repos.Candles, svc.Lookup)
+		binanceProv := binance.New(cfg, svc.DB.Pool, svc.Repos.Events, svc.Repos.Snapshots, svc.Repos.Candles, svc.Lookup)
 		if err := binanceProv.Connect(); err != nil {
 			log.Fatal("binance connect:", err)
 		}
@@ -127,8 +128,19 @@ func startBotForProvider(
 		return
 	}
 
-
 	botResult := initializeBot(ctx, cfg, svc, prov, symbol, symbolUUID, authResult)
+
+	warmer := marketstate.NewWarmer(prov, botResult.ProcessorMgr, 30)
+	if err := warmer.WarmupAllTimeframes(ctx, symbol); err != nil {
+		slog.Error("warm-up failed — bot will not start", "provider", prov.Name(), "err", err)
+		return
+	}
+
+	// Start WebSocket streaming only after indicators are warm.
+	if err := prov.StartStreaming(); err != nil {
+		slog.Error("start streaming failed", "provider", prov.Name(), "err", err)
+		return
+	}
 
 	slog.Info("bot running",
 		"provider", prov.Name(),

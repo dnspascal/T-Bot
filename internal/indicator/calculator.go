@@ -40,8 +40,6 @@ type MarketState struct {
 	IsWarmedUp bool // True when EMA(21) is seeded
 }
 
-// Calculator computes all indicators for one symbol+timeframe.
-// It is stateful: call Calculate once per incoming candle in chronological order.
 type Calculator struct {
 	ema9      *EMA
 	ema21     *EMA
@@ -61,8 +59,6 @@ func NewCalculator() *Calculator {
 	}
 }
 
-// Calculate advances all indicators by one candle and returns the new MarketState.
-// historicalCloses and historicalOHLC are used only by structural/regime functions.
 func (c *Calculator) Calculate(
 	symbolID, provider, period string,
 	barTime int64,
@@ -109,7 +105,6 @@ func (c *Calculator) Calculate(
 	return ms
 }
 
-// LastState returns the most recently calculated MarketState without advancing state.
 func (c *Calculator) LastState() MarketState {
 	return c.lastState
 }
