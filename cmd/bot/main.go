@@ -39,11 +39,9 @@ func main() {
 		"enableBinance": cfg.EnableBinance,
 	}, 0)
 
-	// Initialize provider manager
 	provMgr := provider.NewManager()
 	var enabledProviders []string
 
-	// ============ Initialize cTrader Provider ============
 	if cfg.EnableCTrader {
 		enabledProviders = append(enabledProviders, "ctrader")
 
@@ -57,11 +55,10 @@ func main() {
 		}
 	}
 
-	// ============ Initialize Binance Provider ============
 	if cfg.EnableBinance {
 		enabledProviders = append(enabledProviders, "binance")
 
-		binanceProv := binance.New(cfg, svc.DB.Pool, svc.Repos.Events, svc.Repos.Snapshots)
+		binanceProv := binance.New(cfg, svc.DB.Pool, svc.Repos.Events, svc.Repos.Snapshots, svc.Repos.MarketState, svc.Repos.Candles, svc.Lookup)
 		if err := binanceProv.Connect(); err != nil {
 			log.Fatal("binance connect:", err)
 		}
@@ -74,22 +71,18 @@ func main() {
 		log.Fatal("no providers enabled")
 	}
 
-	// ============ Authenticate All Providers ============
 	authResults, err := provMgr.AuthAllProviders(ctx)
 	if err != nil {
 		slog.Warn("some providers failed auth", "err", err)
 	}
 
-	// ============ Setup All Providers ============
 	if err := provMgr.SetupAllProviders(ctx); err != nil {
 		slog.Warn("some providers failed setup", "err", err)
 	}
 
 
-	// ============ Start Bot Per Provider ============
 	var wg sync.WaitGroup
 
-	// cTrader bot
 	if cfg.EnableCTrader {
 		prov, _ := provMgr.GetProvider("ctrader")
 		authResult := authResults["ctrader"]
@@ -99,7 +92,6 @@ func main() {
 		})
 	}
 
-	// Binance bot
 	if cfg.EnableBinance {
 		prov, _ := provMgr.GetProvider("binance")
 		authResult := authResults["binance"]
@@ -109,7 +101,6 @@ func main() {
 		})
 	}
 
-	// Wait for all bots to complete
 	wg.Wait()
 	slog.Info("all bots stopped")
 }
@@ -137,7 +128,6 @@ func startBotForProvider(
 	}
 
 
-	// Initialize bot with provider-specific symbol
 	botResult := initializeBot(ctx, cfg, svc, prov, symbol, symbolUUID, authResult)
 
 	slog.Info("bot running",

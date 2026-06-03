@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -67,19 +68,18 @@ type OpenOrderResponse struct {
 	UpdateTime          int64  `json:"updateTime"`
 }
 
-// KlineResponse from Binance API
 type KlineResponse struct {
-	OpenTime      int64  `json:"0"`
-	Open          string `json:"1"`
-	High          string `json:"2"`
-	Low           string `json:"3"`
-	Close         string `json:"4"`
-	Volume        string `json:"5"`
-	CloseTime     int64  `json:"6"`
-	QuoteVolume   string `json:"7"`
-	Trades        int64  `json:"8"`
-	TakerBuyBase  string `json:"9"`
-	TakerBuyQuote string `json:"10"`
+	OpenTime      int64
+	Open          string
+	High          string
+	Low           string
+	Close         string
+	Volume        string
+	CloseTime     int64
+	QuoteVolume   string
+	Trades        int64
+	TakerBuyBase  string
+	TakerBuyQuote string
 }
 
 // NewRestClient creates a new Binance REST API client
@@ -214,7 +214,7 @@ func (c *RestClient) GetKlines(symbol, interval string, limit int) ([]KlineRespo
 	params := url.Values{}
 	params.Add("symbol", symbol)
 	params.Add("interval", interval)
-	params.Add("limit", fmt.Sprintf("%d", limit))
+	params.Add("limit", strconv.Itoa(limit))
 
 	path := "/api/v3/klines"
 	resp, err := c.doRequest("GET", path, params)
@@ -228,7 +228,6 @@ func (c *RestClient) GetKlines(symbol, interval string, limit int) ([]KlineRespo
 		return nil, fmt.Errorf("GetKlines failed: %d - %s", resp.StatusCode, string(body))
 	}
 
-	// Binance returns klines as array of arrays: [[timestamp, open, high, ...]]
 	var rawKlines [][]any
 	if err := json.NewDecoder(resp.Body).Decode(&rawKlines); err != nil {
 		return nil, fmt.Errorf("decode klines response: %w", err)
@@ -239,25 +238,25 @@ func (c *RestClient) GetKlines(symbol, interval string, limit int) ([]KlineRespo
 		if len(raw) < 11 {
 			continue
 		}
+
 		klines[i] = KlineResponse{
 			OpenTime:      int64(raw[0].(float64)),
-			Open:          fmt.Sprintf("%.8f", raw[1]),
-			High:          fmt.Sprintf("%.8f", raw[2]),
-			Low:           fmt.Sprintf("%.8f", raw[3]),
-			Close:         fmt.Sprintf("%.8f", raw[4]),
-			Volume:        fmt.Sprintf("%.0f", raw[5]),
+			Open:          raw[1].(string),
+			High:          raw[2].(string),
+			Low:           raw[3].(string),
+			Close:         raw[4].(string),
+			Volume:        raw[5].(string),
 			CloseTime:     int64(raw[6].(float64)),
-			QuoteVolume:   fmt.Sprintf("%.0f", raw[7]),
+			QuoteVolume:   raw[7].(string),
 			Trades:        int64(raw[8].(float64)),
-			TakerBuyBase:  fmt.Sprintf("%.0f", raw[9]),
-			TakerBuyQuote: fmt.Sprintf("%.0f", raw[10]),
+			TakerBuyBase:  raw[9].(string),
+			TakerBuyQuote: raw[10].(string),
 		}
 	}
 
 	return klines, nil
 }
 
-// ValidateAPIKey validates the API key by making a test request
 func (c *RestClient) ValidateAPIKey() (bool, error) {
 	params := url.Values{}
 	params.Add("timestamp", fmt.Sprintf("%d", time.Now().UnixMilli()))

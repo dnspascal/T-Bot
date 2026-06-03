@@ -66,10 +66,7 @@ func (w *Warmer) warmupTimeframe(ctx context.Context, symbol, symbolUUID, period
 	}
 
 	for i, candle := range candles {
-		historicalCloses := closes[:i+1]
-		historicalOHLC := ohlcData[:i+1]
-
-		marketState := w.calculator.CalculateFromHistory(
+		marketState := w.calculator.Calculate(
 			symbolUUID,
 			w.providerName,
 			periodName,
@@ -79,8 +76,8 @@ func (w *Warmer) warmupTimeframe(ctx context.Context, symbol, symbolUUID, period
 			candle.Low,
 			candle.Close,
 			candle.Volume,
-			historicalCloses,
-			historicalOHLC,
+			closes[:i],    // historical only — Calculate appends current candle
+			ohlcData[:i],
 		)
 
 		if err := w.repo.Insert(ctx, marketState); err != nil {

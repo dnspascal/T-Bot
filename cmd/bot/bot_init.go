@@ -4,7 +4,6 @@ import (
 	"context"
 	"log"
 	"log/slog"
-	"time"
 
 	"github.com/denismgaya/t-bot/internal/bot"
 	"github.com/denismgaya/t-bot/internal/config"
@@ -33,13 +32,6 @@ func initializeBot(ctx context.Context, cfg *config.Config, svc *Services, prov 
 	if todayLoss < 0 {
 		riskMgr.RestoreLoss(-todayLoss)
 	}
-
-	warmerStart := time.Now()
-	warmer := marketstate.NewWarmer(prov, svc.Repos.MarketState, prov.Name(), 50)
-	if err := warmer.WarmupAllTimeframes(ctx, symbol, symbolUUID); err != nil {
-		slog.Warn("warmup failed", "err", err)
-	}
-	slog.Info("warmup complete", "elapsedMs", elapsed(warmerStart))
 
 	processorMgr := marketstate.NewProcessorManager(symbolUUID, prov.Name(), svc.Repos.MarketState)
 

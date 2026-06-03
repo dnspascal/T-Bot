@@ -1,6 +1,6 @@
 package indicator
 
-import "github.com/denismgaya/t-bot/internal/util"
+import "math"
 
 type OHLC struct {
 	High  float64
@@ -9,68 +9,91 @@ type OHLC struct {
 }
 
 
-func CalculateADX(ohlcData []OHLC, period int) float64 {
-	if len(ohlcData) < period+1 {
-		return 0  
-	}
 
-	trueRanges := make([]float64, len(ohlcData))
-	plusDMs := make([]float64, len(ohlcData))
-	minusDMs := make([]float64, len(ohlcData))
+type ADX struct {
+	period      int
+	atr         float64
+	plusDM      float64
+	minusDM     float64
+	value       float64
+	prevHigh    float64
+	prevLow     float64
+	prevClose   float64
+	sumTR       float64
+	sumPlusDM   float64
+	sumMinusDM  float64
+	count       int
+	initialized bool
+}
 
-	for i := 1; i < len(ohlcData); i++ {
-		curr := ohlcData[i]
-		prev := ohlcData[i-1]
+func NewADX(period int) *ADX {
+	return &ADX{period: period}
+}
 
-		hl := curr.High - curr.Low
-		hc := util.Abs(curr.High - prev.Close)
-		lc := util.Abs(curr.Low - prev.Close)
-		trueRanges[i] = util.Max(util.Max(hl, hc), lc)
-
-		upMove := curr.High - prev.High
-		downMove := prev.Low - curr.Low
-
-		if upMove > downMove && upMove > 0 {
-			plusDMs[i] = upMove
-		}
-		if downMove > upMove && downMove > 0 {
-			minusDMs[i] = downMove
-		}
-	}
-
-	atr := trueRanges[period]
-	for i := 1; i < period; i++ {
-		atr += trueRanges[i]
-	}
-	atr /= float64(period)
-
-	plusDM := 0.0
-	minusDM := 0.0
-	for i := 1; i <= period; i++ {
-		plusDM += plusDMs[i]
-		minusDM += minusDMs[i]
-	}
-
-	plusDI := (plusDM / atr) * 100
-	minusDI := (minusDM / atr) * 100
-	dx := (util.Abs(plusDI - minusDI) / (plusDI + minusDI)) * 100
-	if plusDI+minusDI == 0 {
+// Add feeds one OHLC candle and returns the current ADX.
+// Returns 0 until the initial DX can be computed.
+func (a *ADX) Add(high, low, close float64) float64 {
+	a.count++
+	if a.count == 1 {
+		a.prevHigh = high
+		a.prevLow = low
+		a.prevClose = close
 		return 0
 	}
 
-	adx := dx
+	tr := math.Max(math.Max(high-low, math.Abs(high-a.prevClose)), math.Abs(low-a.prevClose))
 
-	for i := period + 1; i < len(ohlcData); i++ {
-		atr = (atr*float64(period-1) + trueRanges[i]) / float64(period)
-		plusDM = (plusDM*float64(period-1) + plusDMs[i]) / float64(period)
-		minusDM = (minusDM*float64(period-1) + minusDMs[i]) / float64(period)
+	upMove := high - a.prevHigh
+	downMove := a.prevLow - low
 
-		plusDI = (plusDM / atr) * 100
-		minusDI = (minusDM / atr) * 100
-		dx = (util.Abs(plusDI - minusDI) / (plusDI + minusDI)) * 100
-
-		adx = (adx*float64(period-1) + dx) / float64(period)
+	var plusDM, minusDM float64
+	if upMove > downMove && upMove > 0 {
+		plusDM = upMove
+	}
+	if downMove > upMove && downMove > 0 {
+		minusDM = downMove
 	}
 
-	return adx
+	a.prevHigh = high
+	a.prevLow = low
+	a.prevClose = close
+
+	if !a.initialized {
+		a.sumTR += tr
+		a.sumPlusDM += plusDM
+		a.sumMinusDM += minusDM
+
+		if a.count == a.period+1 {
+			a.atr = a.sumTR / float64(a.period)
+			a.plusDM = a.sumPlusDM / float64(a.period)
+			a.minusDM = a.sumMinusDM / float64(a.period)
+
+			pdi := (a.plusDM / a.atr) * 100
+			mdi := (a.minusDM / a.atr) * 100
+			if pdi+mdi == 0 {
+				return 0
+			}
+			a.value = math.Abs(pdi-mdi) / (pdi+mdi) * 100
+			a.initialized = true
+		}
+		return a.value
+	}
+
+	a.atr = (a.atr*float64(a.period-1) + tr) / float64(a.period)
+	a.plusDM = (a.plusDM*float64(a.period-1) + plusDM) / float64(a.period)
+	a.minusDM = (a.minusDM*float64(a.period-1) + minusDM) / float64(a.period)
+
+	pdi := (a.plusDM / a.atr) * 100
+	mdi := (a.minusDM / a.atr) * 100
+	if pdi+mdi == 0 {
+		return a.value
+	}
+	dx := math.Abs(pdi-mdi) / (pdi+mdi) * 100
+	a.value = (a.value*float64(a.period-1) + dx) / float64(a.period)
+
+	return a.value
 }
+
+func (a *ADX) Value() float64  { return a.value }
+func (a *ADX) IsReady() bool   { return a.initialized }
+

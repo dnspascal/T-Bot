@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"maps"
 	"sync"
 	"time"
 
@@ -72,8 +73,9 @@ type Bot struct {
 	events    *event.Repository
 
 	// Market state processing (multi-timeframe indicators)
+	// Keyed by symbolID then period: marketStates[symbolID][period]
 	processorMgr *marketstate.ProcessorManager
-	marketStates map[string]indicator.MarketState  // Current state per timeframe
+	marketStates map[string]map[string]indicator.MarketState
 }
 
 func New(
@@ -117,7 +119,7 @@ func New(
 		pnls:            pnls,
 		events:          events,
 		processorMgr:    processorMgr,
-		marketStates:    make(map[string]indicator.MarketState),
+		marketStates:    make(map[string]map[string]indicator.MarketState),
 	}
 }
 
@@ -151,24 +153,26 @@ func (b *Bot) Run(ctx context.Context, startedAt time.Time) {
 	}
 }
 
-func (b *Bot) onCandleReceived(ctx context.Context, candle provider.Candle) {
-	// Store raw candle in candles table
-	b.storeCandle(ctx, candle)
+func (b *Bot) onCandleReceived(ctx context.Context, c provider.Candle) {
+	b.storeCandle(ctx, c)
 
-	// Process candle through indicator processors (converts candles to market state)
-	// ProcessCandle expects api.Trendbar, so we need to convert provider.Candle
-	// For now, skip market state processing - will refactor ProcessorManager later
+	states, err := b.processorMgr.ProcessCandle(ctx, c.Timeframe, c.OpenTime, c.Open, c.High, c.Low, c.Close, c.Volume)
+	if err != nil {
+		slog.Error("process candle failed", "timeframe", c.Timeframe, "err", err)
+	}
+	if b.marketStates[b.symbolUUID] == nil {
+		b.marketStates[b.symbolUUID] = make(map[string]indicator.MarketState)
+	}
+	maps.Copy(b.marketStates[b.symbolUUID], states)
 
-	// Only process M5 candles for signal generation
-	if candle.Timeframe == "M5" {
-		if candle.OpenTime != b.lastCandleOpenTime {
+	if c.Timeframe == "M5" {
+		if c.OpenTime != b.lastCandleOpenTime {
 			if b.lastCandleOpenTime != 0 {
-				// Candle closed - generate signals from previous candle
 				b.processClosedCandle(ctx, b.lastCandleClose)
 			}
-			b.lastCandleOpenTime = candle.OpenTime
+			b.lastCandleOpenTime = c.OpenTime
 		}
-		b.lastCandleClose = candle.Close
+		b.lastCandleClose = c.Close
 	}
 }
 
@@ -225,7 +229,7 @@ func (b *Bot) processClosedCandle(ctx context.Context, closePrice float64) {
 	candleReceived := time.Now()
 
 	// Get current M5 market state
-	m5State, ok := b.marketStates["M5"]
+	m5State, ok := b.marketStates[b.symbolUUID]["M5"]
 	if !ok {
 		slog.Warn("M5 market state not available yet")
 		return

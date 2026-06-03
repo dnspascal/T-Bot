@@ -5,11 +5,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/denismgaya/t-bot/internal/config"
+	"github.com/denismgaya/t-bot/internal/util"
 	"github.com/gorilla/websocket"
 )
 
@@ -44,15 +46,16 @@ type PriceData struct {
 }
 
 type KlineData struct {
-	Symbol    string
-	Interval  string
-	OpenTime  int64
-	Open      float64
-	High      float64
-	Low       float64
-	Close     float64
-	Volume    float64
-	CloseTime int64
+	Symbol     string
+	Interval   string
+	OpenTime   int64
+	Open       float64
+	High       float64
+	Low        float64
+	Close      float64
+	Volume     float64
+	TradeCount int64
+	CloseTime  int64
 }
 
 type TradeData struct {
@@ -101,7 +104,6 @@ func (w *WebSocketClient) Connect() error {
 		fmt.Fprintf(&klineStreams, "%s@kline_%s", symbol, interval)
 	}
 
-	// Remove /ws from baseURL since /stream?streams= is the multi-stream endpoint
 	baseURLWithoutWs := strings.TrimSuffix(w.baseURL, "/ws")
 	wsURL := fmt.Sprintf("%s/stream?streams=%s@bookTicker/%s/%s@trade",
 		baseURLWithoutWs,
@@ -123,7 +125,6 @@ func (w *WebSocketClient) Connect() error {
 	w.conn = conn
 	w.mu.Unlock()
 
-	// Start message reader loop
 	go w.readLoop()
 	return nil
 }
@@ -188,55 +189,39 @@ func (w *WebSocketClient) readLoop() {
 		err := conn.ReadJSON(&msg)
 		if err != nil {
 			slog.Error("websocket read error", "err", err)
-			return  // Exit on any error - don't retry dead connection
+			return
 		}
 
-		slog.Info("websocket message received", "msg", string(msg))
 		w.processMessage(msg)
 	}
 }
 
 func (w *WebSocketClient) processMessage(data []byte) {
-	var wrapper map[string]interface{}
+	var wrapper map[string]any
 	if err := json.Unmarshal(data, &wrapper); err != nil {
 		slog.Debug("failed to unmarshal message", "err", err)
 		return
 	}
 
-	// Multi-stream messages are wrapped with stream name and data
-	// {"stream":"btcusdt@kline_5m","data":{...}}
-	var msg map[string]interface{}
+	stream, _ := toString(wrapper["stream"])
+
+	var msg map[string]any
+	var ok bool
 	if rawData, hasData := wrapper["data"]; hasData {
-		// This is a wrapped multi-stream message
-		dataBytes, err := json.Marshal(rawData)
-		if err != nil {
-			slog.Debug("failed to marshal unwrapped data", "err", err)
-			return
-		}
-		if err := json.Unmarshal(dataBytes, &msg); err != nil {
-			slog.Debug("failed to unmarshal unwrapped data", "err", err)
+		msg, ok = rawData.(map[string]any)
+		if !ok {
 			return
 		}
 	} else {
-		// Direct message (shouldn't happen with /stream endpoint, but handle it)
 		msg = wrapper
 	}
 
-	// Check event type: bookTicker messages have no "e" field, kline and trade have "e" field
-	eventType, hasEventType := msg["e"].(string)
-	if !hasEventType {
-		// No "e" field means this is likely a bookTicker message
-		if _, hasBid := msg["b"]; hasBid {
-			w.processBookTicker(msg)
-		}
-		return
-	}
-
-	switch eventType {
-	case "kline":
+	if strings.Contains(stream, "@kline") {
 		w.processKline(msg)
-	case "trade":
+	} else if strings.Contains(stream, "@trade") {
 		w.processTrade(msg)
+	} else if strings.Contains(stream, "@bookTicker") {
+		w.processBookTicker(msg)
 	}
 }
 
@@ -268,40 +253,51 @@ func (w *WebSocketClient) processBookTicker(msg map[string]interface{}) {
 	}
 }
 
-func (w *WebSocketClient) processKline(msg map[string]interface{}) {
-	k, ok := msg["k"].(map[string]interface{})
+func (w *WebSocketClient) processKline(msg map[string]any) {
+	k, ok := msg["k"].(map[string]any)
 	if !ok {
+		slog.Debug("kline missing 'k' field")
 		return
 	}
 
-	// Only process closed candles (x: true). Intermediate updates (x: false) are redundant with price ticks
 	isClosed, _ := k["x"].(bool)
 	if !isClosed {
-		return  // Ignore intermediate candle updates
+		return
 	}
+
+	util.WriteJSONLog("binance_kline.json", msg)
 
 	symbol, _ := toString(msg["s"])
 	interval, _ := toString(k["i"])
-	openTime, _ := toInt64(k["t"])
-	open, _ := toFloat64(k["o"])
-	high, _ := toFloat64(k["h"])
-	low, _ := toFloat64(k["l"])
-	close, _ := toFloat64(k["c"])
-	volume, _ := toFloat64(k["v"])
-	closeTime, _ := toInt64(k["T"])
+	openTime, openTimeOk := toInt64(k["t"])
+	open, openOk := toFloat64(k["o"])
+	high, highOk := toFloat64(k["h"])
+	low, lowOk := toFloat64(k["l"])
+	close, closeOk := toFloat64(k["c"])
+	volume, volumeOk := toFloat64(k["v"])
+	tradeCount, tradeCountOk := toInt64(k["n"])
+	closeTime, closeTimeOk := toInt64(k["T"])
 
-	slog.Info("candle closed", "symbol", symbol, "period", interval, "open", open, "high", high, "low", low, "close", close)
+	if !openTimeOk || !openOk || !highOk || !lowOk || !closeOk || !volumeOk || !tradeCountOk || !closeTimeOk {
+		slog.Warn("kline parse failed",
+			"symbol", symbol, "interval", interval,
+			"openTimeOk", openTimeOk, "openOk", openOk, "highOk", highOk,
+			"lowOk", lowOk, "closeOk", closeOk, "volumeOk", volumeOk, "tradeCountOk", tradeCountOk, "closeTimeOk", closeTimeOk)
+		return
+	}
+
 
 	kline := KlineData{
-		Symbol:    symbol,
-		Interval:  interval,
-		OpenTime:  openTime,
-		Open:      open,
-		High:      high,
-		Low:       low,
-		Close:     close,
-		Volume:    volume,
-		CloseTime: closeTime,
+		Symbol:     symbol,
+		Interval:   interval,
+		OpenTime:   openTime,
+		Open:       open,
+		High:       high,
+		Low:        low,
+		Close:      close,
+		Volume:     volume,
+		TradeCount: tradeCount,
+		CloseTime:  closeTime,
 	}
 
 	select {
@@ -341,37 +337,34 @@ func (w *WebSocketClient) processTrade(msg map[string]interface{}) {
 	}
 }
 
-// Helper functions for type conversions
-func toFloat64(v interface{}) (float64, bool) {
+func toFloat64(v any) (float64, bool) {
 	switch val := v.(type) {
 	case float64:
 		return val, true
 	case string:
-		var f float64
-		fmt.Sscanf(val, "%f", &f)
-		return f, true
+		f, err := strconv.ParseFloat(val, 64)
+		return f, err == nil
 	}
 	return 0, false
 }
 
-func toInt64(v interface{}) (int64, bool) {
+func toInt64(v any) (int64, bool) {
 	switch val := v.(type) {
 	case float64:
 		return int64(val), true
 	case string:
-		var i int64
-		fmt.Sscanf(val, "%d", &i)
-		return i, true
+		i, err := strconv.ParseInt(val, 10, 64)
+		return i, err == nil
 	}
 	return 0, false
 }
 
-func toString(v interface{}) (string, bool) {
+func toString(v any) (string, bool) {
 	str, ok := v.(string)
 	return str, ok
 }
 
-func toBool(v interface{}) (bool, bool) {
+func toBool(v any) (bool, bool) {
 	b, ok := v.(bool)
 	return b, ok
 }

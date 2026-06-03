@@ -1,52 +1,68 @@
 package indicator
 
 type MarketState struct {
-	SymbolID  string
-	Provider  string
-	Period    string  
-	BarTime   int64   
+	SymbolID     string
+	Provider     string
+	Period       string
+	BarTime      int64
+	ProcessingMS int64
 
 	// OHLCV
-	Open      float64
-	High      float64
-	Low       float64
-	Close     float64
-	Volume    int64
+	Open   float64
+	High   float64
+	Low    float64
+	Close  float64
+	Volume int64
 
 	// Indicators
-	EMAFast   float64  // EMA(9)
-	EMASlow   float64  // EMA(21)
-	RSI       float64  // RSI(14)
-	ADX       float64  // ADX(14)
-	ATR       float64  // ATR(14)
+	EMAFast float64 // EMA(9)
+	EMASlow float64 // EMA(21)
+	RSI     float64 // RSI(14)
+	ADX     float64 // ADX(14)
+	ATR     float64 // ATR(14)
+
+	// Structure (support/resistance)
+	SupportLevel    float64
+	ResistanceLevel float64
+	TrendHigh       float64
+	TrendLow        float64
+	BreakoutLevel   float64
+
+	// Regime classification
+	Regime            string // trending_up, trending_down, ranging, breakout
+	VolatilityTrend   string // expanding, contracting, stable
+	MomentumDirection string // rising, falling, stable
+
+	// Volume context
+	VolumeMA int64
 
 	// Status
-	IsWarmedUp bool    // True if all indicators ready (need 21+ candles)
+	IsWarmedUp bool // True when EMA(21) is seeded
 }
 
-// Calculator orchestrates indicator calculation
-// Timeframe-agnostic: same calculation for M5, H1, H4, etc.
+// Calculator computes all indicators for one symbol+timeframe.
+// It is stateful: call Calculate once per incoming candle in chronological order.
 type Calculator struct {
-	emaFastPeriod int  // 9
-	emaSlowPeriod int  // 21
-	rsiPeriod     int  // 14
-	adxPeriod     int  // 14
-	atrPeriod     int  // 14
+	ema9      *EMA
+	ema21     *EMA
+	rsi       *RSI
+	atr       *ATR
+	adx       *ADX
+	lastState MarketState
 }
 
-// NewCalculator creates a calculator with standard periods
 func NewCalculator() *Calculator {
 	return &Calculator{
-		emaFastPeriod: 9,
-		emaSlowPeriod: 21,
-		rsiPeriod:     14,
-		adxPeriod:     14,
-		atrPeriod:     14,
+		ema9:  NewEMA(9),
+		ema21: NewEMA(21),
+		rsi:   NewRSI(14),
+		atr:   NewATR(14),
+		adx:   NewADX(14),
 	}
 }
 
-// Calculate computes all indicators for a given set of closes and OHLC data
-// Input data can be from any timeframe (M5, H1, H4, etc.) - calculation is identical
+// Calculate advances all indicators by one candle and returns the new MarketState.
+// historicalCloses and historicalOHLC are used only by structural/regime functions.
 func (c *Calculator) Calculate(
 	symbolID, provider, period string,
 	barTime int64,
@@ -55,61 +71,45 @@ func (c *Calculator) Calculate(
 	historicalCloses []float64,
 	historicalOHLC []OHLC,
 ) MarketState {
-	// Append current candle to historical data for calculation
-	allCloses := append(historicalCloses, close)
+	c.ema9.Add(close)
+	c.ema21.Add(close)
+	c.rsi.Add(close)
+	c.atr.Add(high, low, close)
+	c.adx.Add(high, low, close)
 
-	ohlcCurrent := OHLC{High: high, Low: low, Close: close}
-	allOHLC := append(historicalOHLC, ohlcCurrent)
+	allCloses := append(historicalCloses, close)
+	allOHLC := append(historicalOHLC, OHLC{High: high, Low: low, Close: close})
 
 	ms := MarketState{
-		SymbolID:   symbolID,
-		Provider:   provider,
-		Period:     period,
-		BarTime:    barTime,
-		Open:       open,
-		High:       high,
-		Low:        low,
-		Close:      close,
-		Volume:     volume,
-		EMAFast:    CalculateEMA(allCloses, c.emaFastPeriod),
-		EMASlow:    CalculateEMA(allCloses, c.emaSlowPeriod),
-		RSI:        CalculateRSI(allCloses, c.rsiPeriod),
-		ADX:        CalculateADX(allOHLC, c.adxPeriod),
-		ATR:        CalculateATR(allOHLC, c.atrPeriod),
+		SymbolID: symbolID,
+		Provider: provider,
+		Period:   period,
+		BarTime:  barTime,
+		Open:     open,
+		High:     high,
+		Low:      low,
+		Close:    close,
+		Volume:   volume,
+		EMAFast:  c.ema9.Value(),
+		EMASlow:  c.ema21.Value(),
+		RSI:      c.rsi.Value(),
+		ADX:      c.adx.Value(),
+		ATR:      c.atr.Value(),
 	}
 
-	ms.IsWarmedUp = len(allCloses) >= c.emaSlowPeriod
+	ms.IsWarmedUp = c.ema21.IsReady()
+	ms.Regime = CalculateRegime(ms.EMAFast, ms.EMASlow, ms.ADX, high, low, allOHLC)
+	ms.VolatilityTrend = CalculateVolatilityTrend(ms.ATR, c.lastState.ATR)
+	ms.MomentumDirection = CalculateMomentumDirection(ms.RSI, allCloses)
+	ms.SupportLevel, ms.ResistanceLevel, ms.TrendHigh, ms.TrendLow = CalculateSupportResistance(allOHLC)
+	ms.BreakoutLevel = CalculateBreakoutLevel(high, low, allOHLC)
+	ms.VolumeMA = CalculateVolumeMA(allCloses, 20)
 
+	c.lastState = ms
 	return ms
 }
 
-func (c *Calculator) CalculateFromHistory(
-	symbolID, provider, period string,
-	barTime int64,
-	open, high, low, close float64,
-	volume int64,
-	historicalCloses []float64,
-	historicalOHLC []OHLC,
-) MarketState {
-	
-	ms := MarketState{
-		SymbolID:   symbolID,
-		Provider:   provider,
-		Period:     period,
-		BarTime:    barTime,
-		Open:       open,
-		High:       high,
-		Low:        low,
-		Close:      close,
-		Volume:     volume,
-		EMAFast:    CalculateEMA(historicalCloses, c.emaFastPeriod),
-		EMASlow:    CalculateEMA(historicalCloses, c.emaSlowPeriod),
-		RSI:        CalculateRSI(historicalCloses, c.rsiPeriod),
-		ADX:        CalculateADX(historicalOHLC, c.adxPeriod),
-		ATR:        CalculateATR(historicalOHLC, c.atrPeriod),
-	}
-
-	ms.IsWarmedUp = len(historicalCloses) >= c.emaSlowPeriod
-
-	return ms
+// LastState returns the most recently calculated MarketState without advancing state.
+func (c *Calculator) LastState() MarketState {
+	return c.lastState
 }

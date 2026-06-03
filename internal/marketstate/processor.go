@@ -4,7 +4,6 @@ import (
 	"context"
 	"log/slog"
 
-	"github.com/denismgaya/t-bot/internal/api"
 	"github.com/denismgaya/t-bot/internal/indicator"
 )
 
@@ -34,71 +33,32 @@ func NewProcessor(
 	}
 }
 
-// ProcessCandle calculates indicators and stores market state for a new candle
-// Returns the calculated market state
-func (p *Processor) ProcessCandle(ctx context.Context, bar api.Trendbar) (indicator.MarketState, error) {
-	// Convert period code to string
-	periodStr := api.PeriodToString(bar.Period)
+// ProcessCandle calculates indicators and stores market state for a new candle.
+func (p *Processor) ProcessCandle(ctx context.Context, openTime int64, open, high, low, close float64, volume int64) (indicator.MarketState, error) {
+	p.buffer.AddCandle(open, high, low, close, volume)
 
-	// Add candle to buffer (maintains sliding window)
-	p.buffer.AddCandle(bar.Open, bar.High, bar.Low, bar.Close, bar.Volume)
-
-	// Calculate all indicators
 	marketState := p.calculator.Calculate(
 		p.symbolID,
 		p.provider,
-		periodStr,
-		bar.OpenTime,
-		bar.Open,
-		bar.High,
-		bar.Low,
-		bar.Close,
-		bar.Volume,
+		p.period,
+		openTime,
+		open, high, low, close,
+		volume,
 		p.buffer.Closes(),
 		p.buffer.OHLC(),
 	)
 
-	// Store in database
 	if err := p.repo.Insert(ctx, marketState); err != nil {
-		slog.Error("failed to store market state",
-			"period", periodStr,
-			"symbolID", p.symbolID,
-			"err", err,
-		)
+		slog.Error("failed to store market state", "period", p.period, "symbolID", p.symbolID, "err", err)
 		return marketState, err
 	}
 
 	return marketState, nil
 }
 
-// State returns the most recent calculated market state (from memory)
-// This is fast (no DB query) for use in signal generation
+// State returns the most recently calculated MarketState without re-running indicators.
 func (p *Processor) State() indicator.MarketState {
-	closes := p.buffer.Closes()
-	ohlc := p.buffer.OHLC()
-
-	if len(closes) == 0 {
-		return indicator.MarketState{
-			SymbolID: p.symbolID,
-			Provider: p.provider,
-			Period:   p.period,
-		}
-	}
-
-	// Calculate from current buffer
-	return p.calculator.Calculate(
-		p.symbolID,
-		p.provider,
-		p.period,
-		0,  // barTime not used here
-		0,  // open not used
-		0,  // high not used
-		0,  // low not used
-		closes[len(closes)-1],  // current close
-		0,  // volume not used
-		closes,
-		ohlc,
-	)
+	return p.calculator.LastState()
 }
 
 // IsWarmedUp returns true if this processor has enough data for indicators
@@ -128,25 +88,21 @@ func (m *ProcessorManager) AddProcessor(period string, processor *Processor) {
 	m.processors[period] = processor
 }
 
-// ProcessCandle processes a candle across all registered processors
-// Returns map of period -> market state
-func (m *ProcessorManager) ProcessCandle(ctx context.Context, bar api.Trendbar) (map[string]indicator.MarketState, error) {
-	periodStr := api.PeriodToString(bar.Period)
-
+// ProcessCandle routes a candle to the matching processor and returns its market state.
+func (m *ProcessorManager) ProcessCandle(ctx context.Context, period string, openTime int64, open, high, low, close float64, volume int64) (map[string]indicator.MarketState, error) {
 	results := make(map[string]indicator.MarketState)
 
-	processor, ok := m.processors[periodStr]
+	processor, ok := m.processors[period]
 	if !ok {
-		slog.Warn("no processor for period", "period", periodStr)
 		return results, nil
 	}
 
-	state, err := processor.ProcessCandle(ctx, bar)
+	state, err := processor.ProcessCandle(ctx, openTime, open, high, low, close, volume)
 	if err != nil {
 		return results, err
 	}
 
-	results[periodStr] = state
+	results[period] = state
 	return results, nil
 }
 
