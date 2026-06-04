@@ -1,6 +1,5 @@
 package api
 
-// cTrader Open API payload type constants (from OpenApiModelMessages.proto)
 const (
 	ProtoOAApplicationAuthReq = uint32(2100)
 	ProtoOAApplicationAuthRes = uint32(2101)
@@ -9,6 +8,7 @@ const (
 	ProtoOATraderReq          = uint32(2104)
 	ProtoOATraderRes          = uint32(2105)
 	ProtoOANewOrderReq        = uint32(2106)
+	ProtoOAClosePositionReq   = uint32(2133)
 	ProtoOAReconcileReq       = uint32(2124)
 	ProtoOAReconcileRes       = uint32(2125)
 	ProtoOAExecutionEvent     = uint32(2126)
@@ -45,7 +45,6 @@ const (
 	PeriodMN1 = uint32(13)
 )
 
-// PeriodToString converts period enum value to string
 func PeriodToString(period uint32) string {
 	switch period {
 	case PeriodM1:
@@ -61,9 +60,9 @@ func PeriodToString(period uint32) string {
 	case PeriodM10:
 		return "M10"
 	case PeriodM15:
-		return "M15"  // 15 min
+		return "M15"  
 	case PeriodM30:
-		return "M30"  // 30 min
+		return "M30"  
 	case PeriodH1:
 		return "H1"
 	case PeriodH4:

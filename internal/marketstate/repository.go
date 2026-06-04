@@ -42,7 +42,7 @@ func (r *PostgresRepository) Insert(ctx context.Context, state indicator.MarketS
 
 	_, err := r.db.Exec(ctx, `
 		INSERT INTO market_states (
-			symbol_id, provider, period, bar_time, processing_ms,
+			symbol_id, provider, period, bar_time, processing_us,
 			open, high, low, close, volume,
 			ema_fast, ema_slow, rsi, adx, atr,
 			support_level, resistance_level, trend_high, trend_low, breakout_level,
@@ -50,7 +50,7 @@ func (r *PostgresRepository) Insert(ctx context.Context, state indicator.MarketS
 		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24)
 		ON CONFLICT (symbol_id, provider, period, bar_time)
 		DO UPDATE SET
-			processing_ms = EXCLUDED.processing_ms,
+			processing_us = EXCLUDED.processing_us,
 			ema_fast = EXCLUDED.ema_fast,
 			ema_slow = EXCLUDED.ema_slow,
 			rsi = EXCLUDED.rsi,
@@ -65,7 +65,7 @@ func (r *PostgresRepository) Insert(ctx context.Context, state indicator.MarketS
 			volatility_trend = EXCLUDED.volatility_trend,
 			momentum_direction = EXCLUDED.momentum_direction,
 			volume_ma = EXCLUDED.volume_ma
-	`, state.SymbolID, state.Provider, state.Period, barTime, state.ProcessingMS,
+	`, state.SymbolID, state.Provider, state.Period, barTime, state.ProcessingUS,
 		state.Open, state.High, state.Low, state.Close, state.Volume,
 		state.EMAFast, state.EMASlow, state.RSI, state.ADX, state.ATR,
 		state.SupportLevel, state.ResistanceLevel, state.TrendHigh, state.TrendLow, state.BreakoutLevel,
@@ -79,7 +79,7 @@ func (r *PostgresRepository) Get(ctx context.Context, symbolID, provider, period
 	var state indicator.MarketState
 
 	err := r.db.QueryRow(ctx, `
-		SELECT symbol_id, provider, period, bar_time, processing_ms,
+		SELECT symbol_id, provider, period, bar_time, processing_us,
 		       open, high, low, close, volume,
 		       ema_fast, ema_slow, rsi, adx, atr,
 		       support_level, resistance_level, trend_high, trend_low, breakout_level,
@@ -87,7 +87,7 @@ func (r *PostgresRepository) Get(ctx context.Context, symbolID, provider, period
 		FROM market_states
 		WHERE symbol_id = $1 AND provider = $2 AND period = $3 AND bar_time = $4
 	`, symbolID, provider, period, barTime).Scan(
-		&state.SymbolID, &state.Provider, &state.Period, &state.BarTime, &state.ProcessingMS,
+		&state.SymbolID, &state.Provider, &state.Period, &state.BarTime, &state.ProcessingUS,
 		&state.Open, &state.High, &state.Low, &state.Close, &state.Volume,
 		&state.EMAFast, &state.EMASlow, &state.RSI, &state.ADX, &state.ATR,
 		&state.SupportLevel, &state.ResistanceLevel, &state.TrendHigh, &state.TrendLow, &state.BreakoutLevel,
@@ -102,7 +102,7 @@ func (r *PostgresRepository) GetLatest(ctx context.Context, symbolID, provider, 
 	var state indicator.MarketState
 
 	err := r.db.QueryRow(ctx, `
-		SELECT symbol_id, provider, period, bar_time, processing_ms,
+		SELECT symbol_id, provider, period, bar_time, processing_us,
 		       open, high, low, close, volume,
 		       ema_fast, ema_slow, rsi, adx, atr,
 		       support_level, resistance_level, trend_high, trend_low, breakout_level,
@@ -112,7 +112,7 @@ func (r *PostgresRepository) GetLatest(ctx context.Context, symbolID, provider, 
 		ORDER BY bar_time DESC
 		LIMIT 1
 	`, symbolID, provider, period).Scan(
-		&state.SymbolID, &state.Provider, &state.Period, &state.BarTime, &state.ProcessingMS,
+		&state.SymbolID, &state.Provider, &state.Period, &state.BarTime, &state.ProcessingUS,
 		&state.Open, &state.High, &state.Low, &state.Close, &state.Volume,
 		&state.EMAFast, &state.EMASlow, &state.RSI, &state.ADX, &state.ATR,
 		&state.SupportLevel, &state.ResistanceLevel, &state.TrendHigh, &state.TrendLow, &state.BreakoutLevel,

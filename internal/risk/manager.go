@@ -7,19 +7,34 @@ import (
 
 
 type Manager struct {
-	riskPercent  float64 
-	maxDailyLoss float64 
+	riskPercent  float64
+	maxDailyLoss float64
 
 	dailyLoss float64
 	dayStart  time.Time
+
+	unitsPerMicroLot int64
+	minVolume        int64
+	maxVolume        int64
 }
 
 func New(riskPercent, maxDailyLoss float64) *Manager {
 	return &Manager{
-		riskPercent:  riskPercent,
-		maxDailyLoss: maxDailyLoss,
-		dayStart:     today(),
+		riskPercent:      riskPercent,
+		maxDailyLoss:     maxDailyLoss,
+		dayStart:         today(),
+		unitsPerMicroLot: 1000,       // CTrader default: 1 micro lot = 1,000 broker units
+		minVolume:        1000,        // minimum 1 micro lot
+		maxVolume:        5_000_000,
 	}
+}
+
+// SetVolumeConfig overrides the per-provider volume scaling.
+// Binance: unitsPerMicroLot=100_000 (satoshi-scale), CTrader: 1_000.
+func (m *Manager) SetVolumeConfig(unitsPerMicroLot, minVolume, maxVolume int64) {
+	m.unitsPerMicroLot = unitsPerMicroLot
+	m.minVolume = minVolume
+	m.maxVolume = maxVolume
 }
 
 var dsmLocation, _ = time.LoadLocation("Africa/Dar_es_Salaam")
@@ -35,11 +50,20 @@ func (m *Manager) PositionSize(balance, stopLossPips float64) (int64, error) {
 	pipValuePerMicroLot := 0.10
 	microLots := riskAmount / (stopLossPips * pipValuePerMicroLot)
 
-	volume := int64(microLots * 100000)
-
-	volume = max(100000, min(volume, 5000000))
+	volume := int64(microLots * float64(m.unitsPerMicroLot))
+	volume = max(m.minVolume, min(volume, m.maxVolume))
 
 	return volume, nil
+}
+
+// PositionSizeForTier scales the base position size by the confluence tier multiplier.
+// Tier 0 = 1× base, tier 1 = 2× base, tier 2 = 3× base, tier 3 = 4× base.
+func (m *Manager) PositionSizeForTier(balance, stopLossPips float64, tier int) (int64, error) {
+	base, err := m.PositionSize(balance, stopLossPips)
+	if err != nil {
+		return 0, err
+	}
+	return min(base*int64(tier+1), 5_000_000), nil
 }
 
 

@@ -37,7 +37,7 @@ CREATE TABLE market_states (
     volume_ma       BIGINT,                     -- volume moving average
 
     -- Performance monitoring
-    processing_ms   BIGINT DEFAULT 0,           -- time to calculate all indicators (received bar → stored state)
+    processing_us   BIGINT DEFAULT 0,           -- microseconds from WebSocket receive to market state stored
 
     -- Flexible storage for optional indicators (no schema change needed)
     -- Example: {"bb_upper": 1.17, "bb_lower": 1.16, "macd": 0.003, "stoch_k": 75}

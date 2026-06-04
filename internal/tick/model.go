@@ -12,5 +12,5 @@ type Tick struct {
 	SessionClose      *float64
 	ProviderTimestamp *time.Time
 	ReceivedAt        time.Time
-	ProcessingMs      int64
+	ProcessingUS      int64
 }

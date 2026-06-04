@@ -48,15 +48,17 @@ func (r *Repository) Upsert(ctx context.Context, p Position) error {
 	return nil
 }
 
-// Close marks a position as closed by its broker-assigned position ID.
-func (r *Repository) Close(ctx context.Context, providerPositionID string, closeTime time.Time) error {
+// Close marks a position as closed and writes the high-water marks tracked during its life.
+func (r *Repository) Close(ctx context.Context, provider, providerPositionID string, closeTime time.Time, maxFavorable, maxAdverse *float64) error {
 	const q = `
 		UPDATE positions SET
 			status          = 'closed',
-			close_timestamp = $2,
+			close_timestamp = $3,
+			max_favorable   = $4,
+			max_adverse     = $5,
 			updated_at      = NOW()
-		WHERE provider = 'ctrader' AND provider_position_id = $1`
-	_, err := r.db.Exec(ctx, q, providerPositionID, closeTime)
+		WHERE provider = $1 AND provider_position_id = $2`
+	_, err := r.db.Exec(ctx, q, provider, providerPositionID, closeTime, maxFavorable, maxAdverse)
 	if err != nil {
 		return fmt.Errorf("position.Close: %w", err)
 	}

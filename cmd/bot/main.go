@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/denismgaya/t-bot/internal/api"
+	"github.com/denismgaya/t-bot/internal/provider/ctrader/api"
 	"github.com/denismgaya/t-bot/internal/config"
 	"github.com/denismgaya/t-bot/internal/marketstate"
 	"github.com/denismgaya/t-bot/internal/provider"
@@ -136,7 +136,6 @@ func startBotForProvider(
 		return
 	}
 
-	// Start WebSocket streaming only after indicators are warm.
 	if err := prov.StartStreaming(); err != nil {
 		slog.Error("start streaming failed", "provider", prov.Name(), "err", err)
 		return

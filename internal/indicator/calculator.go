@@ -5,7 +5,7 @@ type MarketState struct {
 	Provider     string
 	Period       string
 	BarTime      int64
-	ProcessingMS int64
+	ProcessingUS int64 // microseconds from WebSocket receive to market state stored
 
 	// OHLCV
 	Open   float64

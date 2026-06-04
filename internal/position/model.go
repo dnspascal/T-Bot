@@ -14,6 +14,8 @@ type Position struct {
 	OpenPrice          *float64
 	CurrentSL          *float64
 	CurrentTP          *float64
+	MaxFavorable       *float64 // best price in trade direction (written on close)
+	MaxAdverse         *float64 // worst price against trade direction (written on close)
 	Swap               float64
 	Commission         float64
 	UsedMargin         *float64

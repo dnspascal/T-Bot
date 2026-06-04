@@ -6,7 +6,7 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/denismgaya/t-bot/internal/api"
+	"github.com/denismgaya/t-bot/internal/provider/ctrader/api"
 	"github.com/denismgaya/t-bot/internal/bot"
 	"github.com/denismgaya/t-bot/internal/config"
 	"github.com/denismgaya/t-bot/internal/provider"
@@ -266,8 +266,15 @@ func (c *CTrader) QueryOpenPositions(ctx context.Context, symbol string) ([]prov
 	return result, nil
 }
 
-func (c *CTrader) ClosePosition(ctx context.Context, positionID string, volume int64) (closeOrderID string, err error) {
-	return "", fmt.Errorf("ClosePosition not yet implemented for cTrader")
+func (c *CTrader) ClosePosition(ctx context.Context, positionID string, volume int64) (string, error) {
+	var posID int64
+	if _, err := fmt.Sscanf(positionID, "%d", &posID); err != nil {
+		return "", fmt.Errorf("invalid positionID %q: %w", positionID, err)
+	}
+	if err := c.client.ClosePosition(posID, volume); err != nil {
+		return "", fmt.Errorf("ClosePosition: %w", err)
+	}
+	return "", nil // closeOrderID arrives via ExecutionEvent when the fill comes back
 }
 
 func (c *CTrader) ReconcilePositions(ctx context.Context) ([]provider.Position, error) {
@@ -437,17 +444,30 @@ func (c *CTrader) OrderChan() <-chan provider.OrderEvent {
 func (c *CTrader) CandleChan() <-chan provider.Candle {
 	out := make(chan provider.Candle, 100)
 	go func() {
+		type pendingBar struct {
+			openTime int64
+			candle   provider.Candle
+		}
+		pending := make(map[string]pendingBar)
+
 		for bar := range c.client.TrendbarCh {
-			out <- provider.Candle{
-				Symbol:    "",
-				Timeframe: api.PeriodToString(bar.Period),
-				OpenTime:  bar.OpenTime,
-				Open:      bar.Open,
-				High:      bar.High,
-				Low:       bar.Low,
-				Close:     bar.Close,
-				Volume:    bar.Volume,
+			period := api.PeriodToString(bar.Period)
+			current := provider.Candle{
+				Timeframe:  period,
+				OpenTime:   bar.OpenTime,
+				Open:       bar.Open,
+				High:       bar.High,
+				Low:        bar.Low,
+				Close:      bar.Close,
+				Volume:     bar.Volume,
+				ReceivedAt: time.Now(),
 			}
+
+			if prev, ok := pending[period]; ok && prev.openTime != bar.OpenTime {
+				// A new bar started — the previous one is now closed; emit it.
+				out <- prev.candle
+			}
+			pending[period] = pendingBar{openTime: bar.OpenTime, candle: current}
 		}
 		close(out)
 	}()

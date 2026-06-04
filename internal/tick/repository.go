@@ -18,12 +18,12 @@ func New(db *pgxpool.Pool) *Repository {
 func (r *Repository) Insert(ctx context.Context, t Tick) error {
 	const q = `
 		INSERT INTO price_ticks
-			(symbol_id, bid, ask, session_close, provider_timestamp, received_at, processing_ms)
+			(symbol_id, bid, ask, session_close, provider_timestamp, received_at, processing_us)
 		VALUES ($1, $2, $3, $4, $5, $6, $7)`
 	_, err := r.db.Exec(ctx, q,
 		t.SymbolID, t.Bid, t.Ask,
 		t.SessionClose, t.ProviderTimestamp,
-		t.ReceivedAt, t.ProcessingMs,
+		t.ReceivedAt, t.ProcessingUS,
 	)
 	if err != nil {
 		return fmt.Errorf("tick.Insert: %w", err)
@@ -34,7 +34,7 @@ func (r *Repository) Insert(ctx context.Context, t Tick) error {
 func (r *Repository) Recent(ctx context.Context, symbolID string, n int) ([]Tick, error) {
 	const q = `
 		SELECT id, symbol_id, bid, ask, mid, spread,
-		       session_close, provider_timestamp, received_at, processing_ms
+		       session_close, provider_timestamp, received_at, processing_us
 		FROM price_ticks
 		WHERE symbol_id = $1
 		ORDER BY received_at DESC
@@ -50,7 +50,7 @@ func (r *Repository) Recent(ctx context.Context, symbolID string, n int) ([]Tick
 		var t Tick
 		if err := rows.Scan(
 			&t.ID, &t.SymbolID, &t.Bid, &t.Ask, &t.Mid, &t.Spread,
-			&t.SessionClose, &t.ProviderTimestamp, &t.ReceivedAt, &t.ProcessingMs,
+			&t.SessionClose, &t.ProviderTimestamp, &t.ReceivedAt, &t.ProcessingUS,
 		); err != nil {
 			return nil, fmt.Errorf("tick.Recent scan: %w", err)
 		}

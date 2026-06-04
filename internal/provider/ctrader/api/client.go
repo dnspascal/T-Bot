@@ -149,6 +149,21 @@ func (c *Client) FetchHistoricalTrendbars(period uint32, count int) ([]Trendbar,
 }
 
 
+func (c *Client) ClosePosition(positionID, volume int64) error {
+	c.mu.Lock()
+	authed := c.authed
+	accountID := c.accountID
+	c.mu.Unlock()
+
+	if !authed {
+		return fmt.Errorf("not authenticated")
+	}
+
+	slog.Info("closing position", "positionID", positionID, "volume", volume)
+	return c.conn.SendRaw(ProtoOAClosePositionReq,
+		encodeClosePositionReq(accountID, positionID, volume))
+}
+
 func (c *Client) PlaceMarketOrder(side uint32, volume int64, sl, tp float64) error {
 	c.mu.Lock()
 	authed := c.authed

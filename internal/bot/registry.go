@@ -1,0 +1,126 @@
+package bot
+
+import (
+	"sync"
+	"time"
+)
+
+const maxTotalPositions = 4
+
+
+var maxPerTier = [4]int{4, 3, 2, 1}
+
+type trackedPosition struct {
+	ProviderPositionID string
+	Side               string // "BUY" | "SELL"
+	Tier               int
+	Volume             int64
+	OpenPrice          float64
+	SLPrice            float64
+	TPPrice            float64
+	ATR                float64
+	OpenTime           time.Time
+	MaxFavorable       float64 // best price in trade direction (peak profit level)
+	MaxAdverse         float64 // worst price against trade direction (closest to SL)
+}
+
+type PositionRegistry struct {
+	mu        sync.Mutex
+	positions map[string]*trackedPosition
+}
+
+func newPositionRegistry() *PositionRegistry {
+	return &PositionRegistry{positions: make(map[string]*trackedPosition)}
+}
+
+func (r *PositionRegistry) CanOpen(tier int) (bool, string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if len(r.positions) >= maxTotalPositions {
+		return false, "max total positions reached"
+	}
+	if tier < 0 || tier >= len(maxPerTier) {
+		return false, "invalid tier"
+	}
+	count := 0
+	for _, p := range r.positions {
+		if p.Tier == tier {
+			count++
+		}
+	}
+	if count >= maxPerTier[tier] {
+		return false, "max positions for tier reached"
+	}
+	return true, ""
+}
+
+func (r *PositionRegistry) Register(pos trackedPosition) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	// Seed peaks at open price so the first update has a valid baseline.
+	if pos.MaxFavorable == 0 {
+		pos.MaxFavorable = pos.OpenPrice
+	}
+	if pos.MaxAdverse == 0 {
+		pos.MaxAdverse = pos.OpenPrice
+	}
+	r.positions[pos.ProviderPositionID] = &pos
+}
+
+func (r *PositionRegistry) Remove(id string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	delete(r.positions, id)
+}
+
+func (r *PositionRegistry) Get(id string) (trackedPosition, bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	p, ok := r.positions[id]
+	if !ok {
+		return trackedPosition{}, false
+	}
+	return *p, true
+}
+
+func (r *PositionRegistry) All() []trackedPosition {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	out := make([]trackedPosition, 0, len(r.positions))
+	for _, p := range r.positions {
+		out = append(out, *p)
+	}
+	return out
+}
+
+func (r *PositionRegistry) Count() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return len(r.positions)
+}
+
+// UpdatePeaks updates MaxFavorable and MaxAdverse for a position based on the latest price.
+// Called on every M1 candle close while the position is alive.
+func (r *PositionRegistry) UpdatePeaks(id string, currentPrice float64) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	p, ok := r.positions[id]
+	if !ok {
+		return
+	}
+	if p.Side == "BUY" {
+		if currentPrice > p.MaxFavorable {
+			p.MaxFavorable = currentPrice
+		}
+		if p.MaxAdverse == 0 || currentPrice < p.MaxAdverse {
+			p.MaxAdverse = currentPrice
+		}
+	} else {
+		if p.MaxFavorable == 0 || currentPrice < p.MaxFavorable {
+			p.MaxFavorable = currentPrice
+		}
+		if currentPrice > p.MaxAdverse {
+			p.MaxAdverse = currentPrice
+		}
+	}
+}

@@ -29,8 +29,11 @@ CREATE TABLE signals (
 
     confidence      NUMERIC(5,2),               -- 0.0-1.0: estimated win probability (from backtest/historical)
 
+    -- Performance
+    processing_us   BIGINT          NOT NULL DEFAULT 0,  -- microseconds to evaluate this signal
+
     -- Timing
-    bar_time        TIMESTAMPTZ     NOT NULL,  -- when M5 candle closed (triggered this signal)
+    bar_time        TIMESTAMPTZ,                          -- when the M5 candle that triggered this closed (nullable: set when available)
     created_at      TIMESTAMPTZ     NOT NULL DEFAULT NOW(),
 
     PRIMARY KEY (id, created_at)

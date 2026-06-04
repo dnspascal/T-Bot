@@ -68,7 +68,7 @@ func (p *Processor) ProcessCandle(ctx context.Context, openTime int64, open, hig
 		historicalOHLC,
 	)
 
-	marketState.ProcessingMS = time.Since(receivedAt).Microseconds()
+	marketState.ProcessingUS = time.Since(receivedAt).Microseconds()
 
 	if err := p.repo.Insert(ctx, marketState); err != nil {
 		slog.Error("failed to store market state", "period", p.period, "symbolID", p.symbolID, "err", err)
@@ -141,7 +141,6 @@ func (m *ProcessorManager) ProcessCandle(ctx context.Context, period string, ope
 	return results, nil
 }
 
-// GetAllStates returns the last calculated state for every timeframe.
 func (m *ProcessorManager) GetAllStates() map[string]indicator.MarketState {
 	states := make(map[string]indicator.MarketState)
 	for period, processor := range m.processors {
@@ -150,9 +149,11 @@ func (m *ProcessorManager) GetAllStates() map[string]indicator.MarketState {
 	return states
 }
 
-// AllWarmedUp returns true when every registered processor has enough data.
 func (m *ProcessorManager) AllWarmedUp() bool {
-	for _, processor := range m.processors {
+	for period, processor := range m.processors {
+		if period == "M1" {
+			continue // M1 is watcher-only; don't block strategy on M1 warmup
+		}
 		if !processor.IsWarmedUp() {
 			return false
 		}

@@ -14,6 +14,12 @@ CREATE TABLE positions (
     current_sl           NUMERIC(12,5),            -- current stop loss level
     current_tp           NUMERIC(12,5),            -- current take profit level
 
+    -- High-water marks tracked by the watcher across M1 candles, written on close.
+    -- max_favorable: best price reached in trade direction (peak unrealized profit level).
+    -- max_adverse:   worst price reached against trade direction (how close to SL we got).
+    max_favorable        NUMERIC(12,5),
+    max_adverse          NUMERIC(12,5),
+
     -- Costs accumulated while position is open (real currency amounts)
     swap                 NUMERIC(18,4) NOT NULL DEFAULT 0,
     commission           NUMERIC(18,4) NOT NULL DEFAULT 0,

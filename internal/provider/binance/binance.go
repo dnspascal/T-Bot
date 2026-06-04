@@ -287,8 +287,15 @@ func (b *Binance) QueryOpenPositions(ctx context.Context, symbol string) ([]prov
 	return positions, nil
 }
 
-func (b *Binance) ClosePosition(ctx context.Context, positionID string, volume int64) (closeOrderID string, err error) {
-	return "", fmt.Errorf("ClosePosition not yet implemented for Binance")
+// ClosePosition closes a spot long position by placing a SELL market order.
+// volume is in satoshis (100_000_000 = 1 BTC). positionID is unused for spot.
+func (b *Binance) ClosePosition(ctx context.Context, positionID string, volume int64) (string, error) {
+	qty := float64(volume) / 100_000_000
+	orderID, err := b.restClient.PlaceMarketOrder(b.cfg.BinanceSymbol, "SELL", qty)
+	if err != nil {
+		return "", fmt.Errorf("ClosePosition (SELL): %w", err)
+	}
+	return orderID, nil
 }
 
 func (b *Binance) ReconcilePositions(ctx context.Context) ([]provider.Position, error) {

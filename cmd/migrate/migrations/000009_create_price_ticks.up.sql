@@ -10,7 +10,7 @@ CREATE TABLE price_ticks (
     session_close    NUMERIC(12,5),           -- closing price of the current session if sent
     provider_timestamp TIMESTAMPTZ,           -- timestamp inside the provider's own message
     received_at      TIMESTAMPTZ   NOT NULL DEFAULT NOW(), -- when our bot received this tick
-    processing_ms    BIGINT        NOT NULL DEFAULT 0,     -- received_at → stored in DB
+    processing_us    BIGINT        NOT NULL DEFAULT 0,     -- microseconds from tick received to stored in DB
     PRIMARY KEY (id, received_at)
 );
 

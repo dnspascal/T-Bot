@@ -86,6 +86,17 @@ func encodeSubscribeSpotsReq(accountID, symbolID int64) []byte {
 	return b
 }
 
+// encodeClosePositionReq builds a ProtoOAClosePositionReq message.
+// positionID is the broker's numeric position ID; volume is in provider units.
+func encodeClosePositionReq(accountID, positionID, volume int64) []byte {
+	var b []byte
+	b = appendUint32(b, 1, ProtoOAClosePositionReq)
+	b = appendInt64(b, 2, accountID)
+	b = appendInt64(b, 3, positionID)
+	b = appendInt64(b, 4, volume)
+	return b
+}
+
 func encodeNewOrderReq(accountID, symbolID int64, side uint32, volume int64, sl, tp float64) []byte {
 	var b []byte
 	b = appendUint32(b, 1, ProtoOANewOrderReq)
