@@ -65,6 +65,7 @@ func (c *Calculator) Calculate(
 	open, high, low, close float64,
 	volume int64,
 	historicalCloses []float64,
+	historicalVolumes []int64,
 	historicalOHLC []OHLC,
 ) MarketState {
 	c.ema9.Add(close)
@@ -74,6 +75,7 @@ func (c *Calculator) Calculate(
 	c.adx.Add(high, low, close)
 
 	allCloses := append(historicalCloses, close)
+	allVolumes := append(historicalVolumes, volume)
 	allOHLC := append(historicalOHLC, OHLC{High: high, Low: low, Close: close})
 
 	ms := MarketState{
@@ -99,7 +101,7 @@ func (c *Calculator) Calculate(
 	ms.MomentumDirection = CalculateMomentumDirection(ms.RSI, allCloses)
 	ms.SupportLevel, ms.ResistanceLevel, ms.TrendHigh, ms.TrendLow = CalculateSupportResistance(allOHLC)
 	ms.BreakoutLevel = CalculateBreakoutLevel(high, low, allOHLC)
-	ms.VolumeMA = CalculateVolumeMA(allCloses, 20)
+	ms.VolumeMA = CalculateVolumeMA(allVolumes, 20)
 
 	c.lastState = ms
 	return ms

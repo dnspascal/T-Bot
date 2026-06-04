@@ -59,7 +59,7 @@ func main() {
 	if cfg.EnableBinance {
 		enabledProviders = append(enabledProviders, "binance")
 
-		binanceProv := binance.New(cfg, svc.DB.Pool, svc.Repos.Events, svc.Repos.Snapshots, svc.Repos.Candles, svc.Lookup)
+		binanceProv := binance.New(cfg, svc.DB.Pool, svc.Repos.Events, svc.Repos.Snapshots)
 		if err := binanceProv.Connect(); err != nil {
 			log.Fatal("binance connect:", err)
 		}

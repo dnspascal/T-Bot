@@ -29,7 +29,7 @@ const pipSize = 0.0001
 
 // Decision represents a trading decision
 type Decision struct {
-	Signal   string  // "BUY" or "SELL"
+	Signal   string  
 	FastEMA  float64
 	SlowEMA  float64
 	RSI      float64
@@ -156,7 +156,7 @@ func (b *Bot) Run(ctx context.Context, startedAt time.Time) {
 func (b *Bot) onCandleReceived(ctx context.Context, c provider.Candle) {
 	b.storeCandle(ctx, c)
 
-	states, err := b.processorMgr.ProcessCandle(ctx, c.Timeframe, c.OpenTime, c.Open, c.High, c.Low, c.Close, c.Volume)
+	states, err := b.processorMgr.ProcessCandle(ctx, c.Timeframe, c.OpenTime, c.Open, c.High, c.Low, c.Close, c.Volume, c.ReceivedAt)
 	if err != nil {
 		slog.Error("process candle failed", "timeframe", c.Timeframe, "err", err)
 	}

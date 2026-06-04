@@ -8,7 +8,6 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/denismgaya/t-bot/internal/candle"
 	"github.com/denismgaya/t-bot/internal/config"
 	"github.com/denismgaya/t-bot/internal/provider"
 	"github.com/denismgaya/t-bot/internal/snapshot"
@@ -23,12 +22,10 @@ const (
 )
 
 type Binance struct {
-	cfg     *config.Config
-	db      *pgxpool.Pool
-	events  EventsRepo
-	snaps   SnapshotsRepo
-	candles CandlesRepo
-	lookup  Lookup
+	cfg    *config.Config
+	db     *pgxpool.Pool
+	events EventsRepo
+	snaps  SnapshotsRepo
 
 	restClient *RestClient
 	wsClient   *WebSocketClient
@@ -48,23 +45,13 @@ type SnapshotsRepo interface {
 	Insert(context.Context, snapshot.Snapshot) error
 }
 
-type CandlesRepo interface {
-	Upsert(ctx context.Context, c candle.Candle) error
-}
-
-type Lookup interface {
-	Get(symbol string) (string, error)
-}
-
-func New(cfg *config.Config, db *pgxpool.Pool, events EventsRepo, snaps SnapshotsRepo, candles CandlesRepo, lookup Lookup) *Binance {
+func New(cfg *config.Config, db *pgxpool.Pool, events EventsRepo, snaps SnapshotsRepo) *Binance {
 	slog.Info("binance provider created")
 	return &Binance{
 		cfg:            cfg,
 		db:             db,
 		events:         events,
 		snaps:          snaps,
-		candles:        candles,
-		lookup:         lookup,
 		priceCh:        make(chan provider.PriceEvent, 100),
 		executionCh:    make(chan provider.ExecutionEvent, 10),
 		orderCh:        make(chan provider.OrderEvent, 10),
@@ -99,7 +86,6 @@ func (b *Binance) StartStreaming() error {
 	slog.Info("binance streaming started")
 	return nil
 }
-
 
 func (b *Binance) Close() error {
 	if b.wsClient != nil {
@@ -347,7 +333,8 @@ func (b *Binance) FetchHistoricalCandles(
 		high, _ := strconv.ParseFloat(kline.High, 64)
 		low, _ := strconv.ParseFloat(kline.Low, 64)
 		close, _ := strconv.ParseFloat(kline.Close, 64)
-		volume, _ := strconv.ParseInt(kline.Volume, 10, 64)
+		vol, _ := strconv.ParseFloat(kline.Volume, 64)
+		volume := int64(vol)
 
 		candles = append(candles, provider.Candle{
 			Symbol:    symbol,
@@ -432,7 +419,7 @@ func (b *Binance) DisconnectedChan() <-chan struct{} {
 
 func (b *Binance) forwardPriceEvents() {
 	for price := range b.wsClient.PriceChan() {
-		slog.Debug("forwarding binance price", "bid", price.Bid, "ask", price.Ask)
+		
 		select {
 		case b.priceCh <- provider.PriceEvent{
 			Bid:          price.Bid,
@@ -450,41 +437,20 @@ func (b *Binance) forwardPriceEvents() {
 
 func (b *Binance) forwardKlineEvents() {
 	for kline := range b.wsClient.KlineChan() {
-		symbolUUID, err := b.lookup.Get(b.cfg.BinanceSymbol)
-		if err != nil {
-			slog.Warn("failed to lookup symbol UUID", "symbol", kline.Symbol, "err", err)
-			continue
-		}
 
-		if err := b.candles.Upsert(context.Background(), candle.Candle{
-			SymbolID:   symbolUUID,
-			Period:     kline.Interval,
+		slog.Info("Candle received", "Timeframe", kline.Interval)
+
+		select {
+		case b.candleCh <- provider.Candle{
+			Symbol:     kline.Symbol,
+			Timeframe:  intervalToTimeframe(kline.Interval),
+			OpenTime:   kline.OpenTime / 1000,
 			Open:       kline.Open,
 			High:       kline.High,
 			Low:        kline.Low,
 			Close:      kline.Close,
-			TickVolume: kline.TradeCount,
-			BarTime:    time.UnixMilli(kline.OpenTime),
+			Volume:     int64(kline.Volume),
 			ReceivedAt: time.Now(),
-		}); err != nil {
-			slog.Warn("failed to insert candle", "symbol", kline.Symbol, "timeframe", kline.Interval, "err", err)
-		}
-
-		slog.Info("candle received",
-			"symbol", kline.Symbol,
-			"timeframe", kline.Interval,
-			"close", kline.Close)
-
-		select {
-		case b.candleCh <- provider.Candle{
-			Symbol:    kline.Symbol,
-			Timeframe: intervalToTimeframe(kline.Interval),
-			OpenTime:  kline.OpenTime / 1000,
-			Open:      kline.Open,
-			High:      kline.High,
-			Low:       kline.Low,
-			Close:     kline.Close,
-			Volume:    int64(kline.Volume),
 		}:
 		default:
 			slog.Warn("candle channel full, dropping message")
@@ -500,7 +466,7 @@ func timeframeToInterval(tf string) string {
 	if interval, exists := config.PeriodToBinanceInterval[tf]; exists {
 		return interval
 	}
-	return "1m"  // Fallback
+	return "1m" // Fallback
 }
 
 func intervalToTimeframe(interval string) string {

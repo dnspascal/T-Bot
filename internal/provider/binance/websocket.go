@@ -16,22 +16,87 @@ import (
 )
 
 const (
-	wsBaseURL = "wss://stream.binance.com:9443/ws"
+	wsBaseURL    = "wss://stream.binance.com:9443/ws"
 	wsTestnetURL = "wss://stream.testnet.binance.vision/ws"
 )
 
-type WebSocketClient struct {
-	symbol        string
-	period        string  
-	baseURL       string
-	conn          *websocket.Conn
-	mu            sync.RWMutex
+// jsonFloat unmarshals from either a JSON number (63726.65) or a quoted string ("63726.65").
+// Binance testnet sends prices as strings; production mainnet sends them as numbers.
+type jsonFloat float64
 
-	// Channels for market data
-	priceCh   chan PriceData
-	klineCh   chan KlineData
-	tradeCh   chan TradeData
-	closedCh  chan struct{}
+func (f *jsonFloat) UnmarshalJSON(b []byte) error {
+	if len(b) > 0 && b[0] == '"' {
+		v, err := strconv.ParseFloat(string(b[1:len(b)-1]), 64)
+		if err != nil {
+			return err
+		}
+		*f = jsonFloat(v)
+		return nil
+	}
+	var v float64
+	if err := json.Unmarshal(b, &v); err != nil {
+		return err
+	}
+	*f = jsonFloat(v)
+	return nil
+}
+
+type wsEnvelope struct {
+	Stream string          `json:"stream"`
+	Data   json.RawMessage `json:"data"`
+}
+
+type wsKlineEvent struct {
+	Symbol string   `json:"s"`
+	K      wsKline  `json:"k"`
+}
+
+type wsKline struct {
+	Symbol         string    `json:"s"`
+	Interval       string    `json:"i"`
+	OpenTime       int64     `json:"t"`
+	CloseTime      int64     `json:"T"`
+	Open           jsonFloat `json:"o"`
+	High           jsonFloat `json:"h"`
+	Low            jsonFloat `json:"l"`
+	Close          jsonFloat `json:"c"`
+	Volume         jsonFloat `json:"v"` 
+	QuoteVolume    jsonFloat `json:"Q"` 
+	TakerBuyVolume jsonFloat `json:"V"` 
+	TradeCount     int64     `json:"n"`
+	IsClosed       bool      `json:"x"`
+}
+
+type wsBookTicker struct {
+	Symbol  string    `json:"s"`
+	Bid     jsonFloat `json:"b"`
+	BidSize jsonFloat `json:"B"`
+	Ask     jsonFloat `json:"a"`
+	AskSize jsonFloat `json:"A"`
+}
+
+type wsTrade struct {
+	Symbol    string    `json:"s"`
+	TradeID   int64     `json:"t"`
+	Price     jsonFloat `json:"p"`
+	Qty       jsonFloat `json:"q"`
+	BuyerID   int64     `json:"b"`
+	SellerID  int64     `json:"a"`
+	TradeTime int64     `json:"T"`
+	IsBuyer   bool      `json:"m"`
+}
+
+type WebSocketClient struct {
+	symbol  string
+	period  string
+	baseURL string
+	conn    *websocket.Conn
+	mu      sync.RWMutex
+
+	priceCh  chan PriceData
+	klineCh  chan KlineData
+	tradeCh  chan TradeData
+	closedCh chan struct{}
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -46,21 +111,22 @@ type PriceData struct {
 }
 
 type KlineData struct {
-	Symbol     string
-	Interval   string
-	OpenTime   int64
-	Open       float64
-	High       float64
-	Low        float64
-	Close      float64
-	Volume     float64
-	TradeCount int64
-	CloseTime  int64
+	Symbol         string
+	Interval       string
+	OpenTime       int64
+	Open           float64
+	High           float64
+	Low            float64
+	Close          float64
+	Volume         float64 
+	QuoteVolume    float64 
+	TakerBuyVolume float64 
+	TradeCount     int64
+	CloseTime      int64
 }
 
 type TradeData struct {
 	Symbol    string
-	OrderID   int64
 	TradeID   int64
 	Price     float64
 	Qty       float64
@@ -92,7 +158,6 @@ func NewWebSocketClient(symbol, period string, testnet bool) *WebSocketClient {
 }
 
 func (w *WebSocketClient) Connect() error {
-	// Binance WebSocket requires lowercase symbols
 	symbol := strings.ToLower(w.symbol)
 
 	intervals := config.BinanceIntervals()
@@ -141,25 +206,10 @@ func (w *WebSocketClient) Close() error {
 	return nil
 }
 
-// PriceChan returns the price data channel
-func (w *WebSocketClient) PriceChan() <-chan PriceData {
-	return w.priceCh
-}
-
-// KlineChan returns the kline data channel
-func (w *WebSocketClient) KlineChan() <-chan KlineData {
-	return w.klineCh
-}
-
-// TradeChan returns the trade data channel
-func (w *WebSocketClient) TradeChan() <-chan TradeData {
-	return w.tradeCh
-}
-
-// ClosedChan returns a channel that closes when the connection is closed
-func (w *WebSocketClient) ClosedChan() <-chan struct{} {
-	return w.closedCh
-}
+func (w *WebSocketClient) PriceChan() <-chan PriceData  { return w.priceCh }
+func (w *WebSocketClient) KlineChan() <-chan KlineData  { return w.klineCh }
+func (w *WebSocketClient) TradeChan() <-chan TradeData  { return w.tradeCh }
+func (w *WebSocketClient) ClosedChan() <-chan struct{}  { return w.closedCh }
 
 func (w *WebSocketClient) readLoop() {
 	defer close(w.priceCh)
@@ -185,186 +235,113 @@ func (w *WebSocketClient) readLoop() {
 			return
 		}
 
-		var msg json.RawMessage
-		err := conn.ReadJSON(&msg)
-		if err != nil {
+		var raw json.RawMessage
+		if err := conn.ReadJSON(&raw); err != nil {
 			slog.Error("websocket read error", "err", err)
 			return
 		}
 
-		w.processMessage(msg)
+		w.processMessage(raw)
 	}
 }
 
-func (w *WebSocketClient) processMessage(data []byte) {
-	var wrapper map[string]any
-	if err := json.Unmarshal(data, &wrapper); err != nil {
-		slog.Debug("failed to unmarshal message", "err", err)
+func (w *WebSocketClient) processMessage(data json.RawMessage) {
+	var env wsEnvelope
+	if err := json.Unmarshal(data, &env); err != nil {
+		slog.Debug("failed to unmarshal envelope", "err", err)
 		return
 	}
 
-	stream, _ := toString(wrapper["stream"])
+		util.WriteJSONLog("binance_event.json", env)
 
-	var msg map[string]any
-	var ok bool
-	if rawData, hasData := wrapper["data"]; hasData {
-		msg, ok = rawData.(map[string]any)
-		if !ok {
-			return
-		}
-	} else {
-		msg = wrapper
+
+	payload := env.Data
+	if payload == nil {
+		payload = data
 	}
 
-	if strings.Contains(stream, "@kline") {
-		w.processKline(msg)
-	} else if strings.Contains(stream, "@trade") {
-		w.processTrade(msg)
-	} else if strings.Contains(stream, "@bookTicker") {
-		w.processBookTicker(msg)
+	switch {
+	case strings.Contains(env.Stream, "@kline"):
+		w.processKline(payload)
+	case strings.Contains(env.Stream, "@trade"):
+		w.processTrade(payload)
+	case strings.Contains(env.Stream, "@bookTicker"):
+		w.processBookTicker(payload)
 	}
 }
 
-func (w *WebSocketClient) processBookTicker(msg map[string]interface{}) {
-	bid, bidOk := toFloat64(msg["b"])
-	bids, bidsOk := toFloat64(msg["B"])
-	ask, askOk := toFloat64(msg["a"])
-	asks, asksOk := toFloat64(msg["A"])
-
-	if !bidOk || !bidsOk || !askOk || !asksOk {
-		slog.Debug("bookTicker missing fields", "bidOk", bidOk, "bidsOk", bidsOk, "askOk", askOk, "asksOk", asksOk)
+func (w *WebSocketClient) processBookTicker(data json.RawMessage) {
+	var t wsBookTicker
+	if err := json.Unmarshal(data, &t); err != nil {
+		slog.Debug("failed to unmarshal bookTicker", "err", err)
 		return
 	}
 
-	slog.Info("price tick", "bid", bid, "bidSize", bids, "ask", ask, "askSize", asks)
-
-	price := PriceData{
-		Bid:       bid,
-		BidSize:   bids,
-		Ask:       ask,
-		AskSize:   asks,
-		Timestamp: time.Now(),
-	}
+	slog.Info("price tick", "bid", float64(t.Bid), "bidSize", float64(t.BidSize), "ask", float64(t.Ask), "askSize", float64(t.AskSize))
 
 	select {
-	case w.priceCh <- price:
+	case w.priceCh <- PriceData{
+		Bid:       float64(t.Bid),
+		BidSize:   float64(t.BidSize),
+		Ask:       float64(t.Ask),
+		AskSize:   float64(t.AskSize),
+		Timestamp: time.Now(),
+	}:
 	default:
 		slog.Warn("price channel full, dropping message")
 	}
 }
 
-func (w *WebSocketClient) processKline(msg map[string]any) {
-	k, ok := msg["k"].(map[string]any)
-	if !ok {
-		slog.Debug("kline missing 'k' field")
+func (w *WebSocketClient) processKline(data json.RawMessage) {
+	var event wsKlineEvent
+	if err := json.Unmarshal(data, &event); err != nil {
+		slog.Debug("failed to unmarshal kline", "err", err)
 		return
 	}
 
-	isClosed, _ := k["x"].(bool)
-	if !isClosed {
+	k := event.K
+	if !k.IsClosed {
 		return
-	}
-
-	util.WriteJSONLog("binance_kline.json", msg)
-
-	symbol, _ := toString(msg["s"])
-	interval, _ := toString(k["i"])
-	openTime, openTimeOk := toInt64(k["t"])
-	open, openOk := toFloat64(k["o"])
-	high, highOk := toFloat64(k["h"])
-	low, lowOk := toFloat64(k["l"])
-	close, closeOk := toFloat64(k["c"])
-	volume, volumeOk := toFloat64(k["v"])
-	tradeCount, tradeCountOk := toInt64(k["n"])
-	closeTime, closeTimeOk := toInt64(k["T"])
-
-	if !openTimeOk || !openOk || !highOk || !lowOk || !closeOk || !volumeOk || !tradeCountOk || !closeTimeOk {
-		slog.Warn("kline parse failed",
-			"symbol", symbol, "interval", interval,
-			"openTimeOk", openTimeOk, "openOk", openOk, "highOk", highOk,
-			"lowOk", lowOk, "closeOk", closeOk, "volumeOk", volumeOk, "tradeCountOk", tradeCountOk, "closeTimeOk", closeTimeOk)
-		return
-	}
-
-
-	kline := KlineData{
-		Symbol:     symbol,
-		Interval:   interval,
-		OpenTime:   openTime,
-		Open:       open,
-		High:       high,
-		Low:        low,
-		Close:      close,
-		Volume:     volume,
-		TradeCount: tradeCount,
-		CloseTime:  closeTime,
 	}
 
 	select {
-	case w.klineCh <- kline:
+	case w.klineCh <- KlineData{
+		Symbol:         k.Symbol,
+		Interval:       k.Interval,
+		OpenTime:       k.OpenTime,
+		Open:           float64(k.Open),
+		High:           float64(k.High),
+		Low:            float64(k.Low),
+		Close:          float64(k.Close),
+		Volume:         float64(k.Volume),
+		QuoteVolume:    float64(k.QuoteVolume),
+		TakerBuyVolume: float64(k.TakerBuyVolume),
+		TradeCount:     k.TradeCount,
+		CloseTime:      k.CloseTime,
+	}:
 	default:
-		// Channel full, drop message
+		slog.Warn("kline channel full, dropping message")
 	}
 }
 
-func (w *WebSocketClient) processTrade(msg map[string]interface{}) {
-	symbol, _ := toString(msg["s"])
-	orderID, _ := toInt64(msg["a"])
-	tradeID, _ := toInt64(msg["t"])
-	price, _ := toFloat64(msg["p"])
-	qty, _ := toFloat64(msg["q"])
-	buyerID, _ := toInt64(msg["b"])
-	sellerID, _ := toInt64(msg["a"])
-	tradeTime, _ := toInt64(msg["T"])
-	isBuyer, _ := toBool(msg["m"])
-
-	trade := TradeData{
-		Symbol:    symbol,
-		OrderID:   orderID,
-		TradeID:   tradeID,
-		Price:     price,
-		Qty:       qty,
-		BuyerID:   buyerID,
-		SellerID:  sellerID,
-		TradeTime: tradeTime,
-		IsBuyer:   isBuyer,
+func (w *WebSocketClient) processTrade(data json.RawMessage) {
+	var t wsTrade
+	if err := json.Unmarshal(data, &t); err != nil {
+		slog.Debug("failed to unmarshal trade", "err", err)
+		return
 	}
 
 	select {
-	case w.tradeCh <- trade:
+	case w.tradeCh <- TradeData{
+		Symbol:    t.Symbol,
+		TradeID:   t.TradeID,
+		Price:     float64(t.Price),
+		Qty:       float64(t.Qty),
+		BuyerID:   t.BuyerID,
+		SellerID:  t.SellerID,
+		TradeTime: t.TradeTime,
+		IsBuyer:   t.IsBuyer,
+	}:
 	default:
-		// Channel full, drop message
 	}
-}
-
-func toFloat64(v any) (float64, bool) {
-	switch val := v.(type) {
-	case float64:
-		return val, true
-	case string:
-		f, err := strconv.ParseFloat(val, 64)
-		return f, err == nil
-	}
-	return 0, false
-}
-
-func toInt64(v any) (int64, bool) {
-	switch val := v.(type) {
-	case float64:
-		return int64(val), true
-	case string:
-		i, err := strconv.ParseInt(val, 10, 64)
-		return i, err == nil
-	}
-	return 0, false
-}
-
-func toString(v any) (string, bool) {
-	str, ok := v.(string)
-	return str, ok
-}
-
-func toBool(v any) (bool, bool) {
-	b, ok := v.(bool)
-	return b, ok
 }

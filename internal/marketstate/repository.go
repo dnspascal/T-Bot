@@ -38,8 +38,7 @@ func NewPostgresRepository(db *pgxpool.Pool) *PostgresRepository {
 
 // Insert stores or updates a market state
 func (r *PostgresRepository) Insert(ctx context.Context, state indicator.MarketState) error {
-	// Convert Unix timestamp (milliseconds) to time.Time
-	barTime := time.UnixMilli(state.BarTime)
+	barTime := time.Unix(state.BarTime, 0).UTC()
 
 	_, err := r.db.Exec(ctx, `
 		INSERT INTO market_states (

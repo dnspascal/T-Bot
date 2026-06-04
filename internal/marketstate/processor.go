@@ -3,6 +3,7 @@ package marketstate
 import (
 	"context"
 	"log/slog"
+	"time"
 
 	"github.com/denismgaya/t-bot/internal/indicator"
 )
@@ -33,6 +34,7 @@ func NewProcessor(
 
 func (p *Processor) WarmCandle(openTime int64, open, high, low, close float64, volume int64) {
 	historical := p.buffer.Closes()
+	historicalVolumes := p.buffer.Volumes()
 	historicalOHLC := p.buffer.OHLC()
 	p.buffer.AddCandle(open, high, low, close, volume)
 	p.calculator.Calculate(
@@ -41,6 +43,7 @@ func (p *Processor) WarmCandle(openTime int64, open, high, low, close float64, v
 		open, high, low, close,
 		volume,
 		historical,
+		historicalVolumes,
 		historicalOHLC,
 	)
 }
@@ -49,10 +52,9 @@ func (p *Processor) Commit(ctx context.Context) error {
 	return p.repo.Insert(ctx, p.calculator.LastState())
 }
 
-// ProcessCandle calculates indicators for a live candle and stores it.
-func (p *Processor) ProcessCandle(ctx context.Context, openTime int64, open, high, low, close float64, volume int64) (indicator.MarketState, error) {
-	// Capture historical BEFORE adding current — Calculator appends current internally.
+func (p *Processor) ProcessCandle(ctx context.Context, openTime int64, open, high, low, close float64, volume int64, receivedAt time.Time) (indicator.MarketState, error) {
 	historical := p.buffer.Closes()
+	historicalVolumes := p.buffer.Volumes()
 	historicalOHLC := p.buffer.OHLC()
 	p.buffer.AddCandle(open, high, low, close, volume)
 
@@ -62,8 +64,11 @@ func (p *Processor) ProcessCandle(ctx context.Context, openTime int64, open, hig
 		open, high, low, close,
 		volume,
 		historical,
+		historicalVolumes,
 		historicalOHLC,
 	)
+
+	marketState.ProcessingMS = time.Since(receivedAt).Microseconds()
 
 	if err := p.repo.Insert(ctx, marketState); err != nil {
 		slog.Error("failed to store market state", "period", p.period, "symbolID", p.symbolID, "err", err)
@@ -73,7 +78,6 @@ func (p *Processor) ProcessCandle(ctx context.Context, openTime int64, open, hig
 	return marketState, nil
 }
 
-// State returns the most recently calculated MarketState without re-running indicators.
 func (p *Processor) State() indicator.MarketState {
 	return p.calculator.LastState()
 }
@@ -120,8 +124,7 @@ func (m *ProcessorManager) CommitWarmup(ctx context.Context, period string) erro
 	return p.Commit(ctx)
 }
 
-// ProcessCandle routes a live candle to its processor and returns the new market state.
-func (m *ProcessorManager) ProcessCandle(ctx context.Context, period string, openTime int64, open, high, low, close float64, volume int64) (map[string]indicator.MarketState, error) {
+func (m *ProcessorManager) ProcessCandle(ctx context.Context, period string, openTime int64, open, high, low, close float64, volume int64, receivedAt time.Time) (map[string]indicator.MarketState, error) {
 	results := make(map[string]indicator.MarketState)
 
 	processor, ok := m.processors[period]
@@ -129,7 +132,7 @@ func (m *ProcessorManager) ProcessCandle(ctx context.Context, period string, ope
 		return results, nil
 	}
 
-	state, err := processor.ProcessCandle(ctx, openTime, open, high, low, close, volume)
+	state, err := processor.ProcessCandle(ctx, openTime, open, high, low, close, volume, receivedAt)
 	if err != nil {
 		return results, err
 	}

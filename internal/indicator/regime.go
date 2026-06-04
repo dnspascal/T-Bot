@@ -62,15 +62,18 @@ func CalculateMomentumDirection(rsi float64, closes []float64) string {
 	return "stable"
 }
 
-// CalculateVolumeMA calculates simple moving average of volume
-func CalculateVolumeMA(closes []float64, period int) int64 {
-	if len(closes) < period {
-		period = len(closes)
+// CalculateVolumeMA calculates the simple moving average of volume over the last period candles.
+func CalculateVolumeMA(volumes []int64, period int) int64 {
+	if len(volumes) == 0 {
+		return 0
+	}
+	if len(volumes) < period {
+		period = len(volumes)
 	}
 
 	var sum int64
-	for i := len(closes) - period; i < len(closes); i++ {
-		sum += int64(closes[i])
+	for i := len(volumes) - period; i < len(volumes); i++ {
+		sum += volumes[i]
 	}
 
 	return sum / int64(period)

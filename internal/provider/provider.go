@@ -50,14 +50,15 @@ type Position struct {
 }
 
 type Candle struct {
-	Symbol    string
-	Timeframe string
-	OpenTime  int64
-	Open      float64
-	High      float64
-	Low       float64
-	Close     float64
-	Volume    int64
+	Symbol     string
+	Timeframe  string
+	OpenTime   int64
+	Open       float64
+	High       float64
+	Low        float64
+	Close      float64
+	Volume     int64
+	ReceivedAt time.Time // when the WebSocket message arrived
 }
 
 // ==================== EVENT TYPES ====================

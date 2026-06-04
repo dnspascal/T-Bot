@@ -44,6 +44,15 @@ func (w *Warmer) warmupTimeframe(ctx context.Context, symbol, period string) err
 		return fmt.Errorf("no historical candles returned")
 	}
 
+	slog.Info("fetched candles",
+		"period", period,
+		"count", len(candles),
+		"firstClose", candles[0].Close,
+		"lastClose", candles[len(candles)-1].Close,
+		"firstTime", candles[0].OpenTime,
+		"lastTime", candles[len(candles)-1].OpenTime,
+	)
+
 	for _, c := range candles {
 		w.processorMgr.WarmCandle(period, c.OpenTime, c.Open, c.High, c.Low, c.Close, c.Volume)
 	}
