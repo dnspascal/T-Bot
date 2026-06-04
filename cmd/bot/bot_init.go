@@ -30,7 +30,6 @@ func initializeBot(ctx context.Context, cfg *config.Config, svc *Services, prov 
 	}
 	riskMgr := risk.New(cfg.RiskPercent, cfg.MaxDailyLoss)
 	if prov.Name() == "binance" {
-		// Binance volume is in satoshis; keep the legacy scale.
 		riskMgr.SetVolumeConfig(100_000, 1000, 5_000_000)
 	}
 	if todayLoss < 0 {

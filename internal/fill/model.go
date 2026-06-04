@@ -29,6 +29,7 @@ type Fill struct {
 	PnLConversionFee   *float64
 	TradeDurationMs    *int64
 	NetProfit          *float64
+	CloseReason        *string
 	ProviderCreateTime *time.Time
 	ProviderExecTime   *time.Time
 	RawPayload         []byte

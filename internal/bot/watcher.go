@@ -45,18 +45,19 @@ func (b *Bot) watchPositions(ctx context.Context, ms indicator.MarketState) {
 			"currentPrice", fmt.Sprintf("%.5f", ms.Close),
 		)
 
+		reason := strings.Join(signals, ",")
 		switch {
 		case n >= signalsToClose:
 			slog.Info("3+ signals confirmed — closing position",
 				"posID", pos.ProviderPositionID, "n", n,
 			)
-			b.closeTrackedPosition(ctx, pos)
+			b.closeTrackedPosition(ctx, pos, reason)
 
 		case n >= signalsToReduce && pos.Tier >= TierStronger:
 			slog.Info("2 signals — reducing high-tier position",
 				"posID", pos.ProviderPositionID, "tier", pos.Tier,
 			)
-			b.closeTrackedPosition(ctx, pos)
+			b.closeTrackedPosition(ctx, pos, reason)
 		}
 	}
 }
@@ -126,12 +127,13 @@ func peakDrawbackPct(pos trackedPosition, currentPrice float64) float64 {
 	return (gaveBack / peakGain) * 100
 }
 
-func (b *Bot) closeTrackedPosition(ctx context.Context, pos trackedPosition) {
+func (b *Bot) closeTrackedPosition(ctx context.Context, pos trackedPosition, reason string) {
 	if _, err := b.provider.ClosePosition(ctx, pos.ProviderPositionID, pos.Volume); err != nil {
 		slog.Error("watcher: ClosePosition failed",
 			"posID", pos.ProviderPositionID, "err", err,
 		)
 		return
 	}
+	b.pendingCloseReasons[pos.ProviderPositionID] = reason
 	b.registry.Remove(pos.ProviderPositionID)
 }

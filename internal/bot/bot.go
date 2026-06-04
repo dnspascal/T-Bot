@@ -55,6 +55,10 @@ type Bot struct {
 	lastCandleOpenTime int64
 	lastCandleClose    float64
 
+	// pendingCloseReasons maps providerPositionID → close reason for positions the
+	// watcher explicitly closed, so recordCloseFill can write the right reason.
+	pendingCloseReasons map[string]string
+
 	db        *pgxpool.Pool
 	lookup    *symbol.SymbolLookup
 	ticks     *tick.Repository
@@ -100,7 +104,8 @@ func New(
 		db:             db,
 		riskMgr:        riskMgr,
 		balance:        balance,
-		registry:       newPositionRegistry(),
+		registry:            newPositionRegistry(),
+		pendingCloseReasons: make(map[string]string),
 		lookup:         lookup,
 		ticks:          ticks,
 		candles:        candles,
@@ -499,11 +504,20 @@ func (b *Bot) recordCloseFill(ctx context.Context, exec provider.ExecutionEvent)
 	provOrderID := fmt.Sprintf("%d", deal.OrderID)
 	provPosID := fmt.Sprintf("%d", deal.PositionID)
 
-	// Grab high-water marks before removing from registry.
+	// Grab everything we need before removing from registry.
 	var maxFav, maxAdv *float64
+	var closeReason *string
 	if tracked, ok := b.registry.Get(provPosID); ok {
 		maxFav = &tracked.MaxFavorable
 		maxAdv = &tracked.MaxAdverse
+	}
+	if reason, ok := b.pendingCloseReasons[provPosID]; ok {
+		closeReason = &reason
+		delete(b.pendingCloseReasons, provPosID)
+	} else {
+		// Position was closed by cTrader's SL/TP mechanism — infer from P&L.
+		r := inferCloseReason(cl.GrossProfit)
+		closeReason = &r
 	}
 	b.registry.Remove(provPosID)
 
@@ -545,6 +559,7 @@ func (b *Bot) recordCloseFill(ctx context.Context, exec provider.ExecutionEvent)
 		BalanceAfter:       &balanceAfter,
 		ClosedVolume:       &closedVolume,
 		PnLConversionFee:   &pnlFee,
+		CloseReason:        closeReason,
 		ProviderCreateTime: &deal.CreateTime,
 		ProviderExecTime:   &deal.ExecTime,
 		ReceivedAt:         exec.Timestamp,
@@ -677,4 +692,14 @@ func LoadCredential(ctx context.Context, db *pgxpool.Pool, key string) (string, 
 
 func ms(t time.Time) int64 {
 	return time.Since(t).Milliseconds()
+}
+
+// inferCloseReason returns "tp_hit" or "sl_hit" based on whether cTrader's
+// automatic order produced a gain or a loss. Used when the bot didn't initiate
+// the close itself (i.e., no entry in pendingCloseReasons).
+func inferCloseReason(grossProfit float64) string {
+	if grossProfit >= 0 {
+		return "tp_hit"
+	}
+	return "sl_hit"
 }

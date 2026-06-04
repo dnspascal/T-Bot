@@ -212,8 +212,9 @@ func (c *Client) handleMessage(payloadType uint32, payload []byte) {
 			}
 		}
 		
-		if bar, ok := decodeLiveTrendbarEvent(payload); ok {
+		for _, bar := range decodeLiveTrendbarEvents(payload) {
 			slog.Debug("live trendbar received",
+				"period", PeriodToString(bar.Period),
 				"openTime", bar.OpenTime,
 				"open", bar.Open,
 				"high", bar.High,

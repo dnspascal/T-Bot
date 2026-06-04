@@ -368,10 +368,10 @@ func decodeGetTrendbarsRes(data []byte) []Trendbar {
 	return bars
 }
 
-// decodeLiveTrendbarEvent extracts the M5 trendbar from a ProtoOASpotEvent payload.
-// Field 6 of SpotEvent is repeated ProtoOATrendbar; each trendbar carries its own
-// period enum at trendbar field 4. Returns (bar, true) only for PeriodM5 bars.
-func decodeLiveTrendbarEvent(data []byte) (Trendbar, bool) {
+// decodeLiveTrendbarEvents extracts all trendbars from a ProtoOASpotEvent payload.
+// Field 6 of SpotEvent is repeated ProtoOATrendbar, one entry per subscribed period.
+func decodeLiveTrendbarEvents(data []byte) []Trendbar {
+	var bars []Trendbar
 	i := 0
 	for i < len(data) {
 		tag, n := decodeVarint(data[i:])
@@ -384,16 +384,15 @@ func decodeLiveTrendbarEvent(data []byte) (Trendbar, bool) {
 		if field == 6 && wire == 2 { // repeated ProtoOATrendbar in SpotEvent
 			l, n2 := decodeVarint(data[i:])
 			i += n2
-			bar, ok := decodeTrendbarForPeriod(data[i:i+int(l)], PeriodM5)
-			i += int(l)
-			if ok {
-				return bar, true
+			if bar, ok := decodeTrendbar(data[i : i+int(l)]); ok {
+				bars = append(bars, bar)
 			}
+			i += int(l)
 			continue
 		}
 		i = skipField(data, i, wire)
 	}
-	return Trendbar{}, false
+	return bars
 }
 
 // --- Decoders for new response types ---
