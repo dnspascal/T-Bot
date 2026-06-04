@@ -11,17 +11,17 @@ import (
 	"time"
 
 	"github.com/denismgaya/t-bot/internal/config"
-	"github.com/denismgaya/t-bot/internal/util"
 	"github.com/gorilla/websocket"
 )
 
 const (
 	wsBaseURL    = "wss://stream.binance.com:9443/ws"
 	wsTestnetURL = "wss://stream.testnet.binance.vision/ws"
+
+	wsPingInterval = 3 * time.Minute 
+	wsReadTimeout  = 5 * time.Minute 
 )
 
-// jsonFloat unmarshals from either a JSON number (63726.65) or a quoted string ("63726.65").
-// Binance testnet sends prices as strings; production mainnet sends them as numbers.
 type jsonFloat float64
 
 func (f *jsonFloat) UnmarshalJSON(b []byte) error {
@@ -47,8 +47,8 @@ type wsEnvelope struct {
 }
 
 type wsKlineEvent struct {
-	Symbol string   `json:"s"`
-	K      wsKline  `json:"k"`
+	Symbol string  `json:"s"`
+	K      wsKline `json:"k"`
 }
 
 type wsKline struct {
@@ -60,9 +60,9 @@ type wsKline struct {
 	High           jsonFloat `json:"h"`
 	Low            jsonFloat `json:"l"`
 	Close          jsonFloat `json:"c"`
-	Volume         jsonFloat `json:"v"` 
-	QuoteVolume    jsonFloat `json:"Q"` 
-	TakerBuyVolume jsonFloat `json:"V"` 
+	Volume         jsonFloat `json:"v"`
+	QuoteVolume    jsonFloat `json:"Q"`
+	TakerBuyVolume jsonFloat `json:"V"`
 	TradeCount     int64     `json:"n"`
 	IsClosed       bool      `json:"x"`
 }
@@ -118,9 +118,9 @@ type KlineData struct {
 	High           float64
 	Low            float64
 	Close          float64
-	Volume         float64 
-	QuoteVolume    float64 
-	TakerBuyVolume float64 
+	Volume         float64
+	QuoteVolume    float64
+	TakerBuyVolume float64
 	TradeCount     int64
 	CloseTime      int64
 }
@@ -157,9 +157,8 @@ func NewWebSocketClient(symbol, period string, testnet bool) *WebSocketClient {
 	}
 }
 
-func (w *WebSocketClient) Connect() error {
+func (w *WebSocketClient) buildURL() string {
 	symbol := strings.ToLower(w.symbol)
-
 	intervals := config.BinanceIntervals()
 	var klineStreams strings.Builder
 	for i, interval := range intervals {
@@ -168,29 +167,40 @@ func (w *WebSocketClient) Connect() error {
 		}
 		fmt.Fprintf(&klineStreams, "%s@kline_%s", symbol, interval)
 	}
-
 	baseURLWithoutWs := strings.TrimSuffix(w.baseURL, "/ws")
-	wsURL := fmt.Sprintf("%s/stream?streams=%s@bookTicker/%s/%s@trade",
-		baseURLWithoutWs,
-		symbol,
-		klineStreams.String(),
-		symbol,
-	)
+	return fmt.Sprintf("%s/stream?streams=%s@bookTicker/%s/%s@trade",
+		baseURLWithoutWs, symbol, klineStreams.String(), symbol)
+}
 
+func (w *WebSocketClient) dial() error {
+	wsURL := w.buildURL()
 	slog.Info("connecting to websocket", "url", wsURL)
-
 	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
 	if err != nil {
 		return fmt.Errorf("websocket dial: %w", err)
 	}
-
-	slog.Info("websocket connected successfully")
+	conn.SetPongHandler(func(string) error {
+		conn.SetReadDeadline(time.Now().Add(wsReadTimeout))
+		return nil
+	})
+	conn.SetReadDeadline(time.Now().Add(wsReadTimeout))
 
 	w.mu.Lock()
+	if w.conn != nil {
+		w.conn.Close()
+	}
 	w.conn = conn
 	w.mu.Unlock()
+	return nil
+}
 
+func (w *WebSocketClient) Connect() error {
+	if err := w.dial(); err != nil {
+		return err
+	}
+	slog.Info("websocket connected")
 	go w.readLoop()
+	go w.keepAlive()
 	return nil
 }
 
@@ -206,23 +216,67 @@ func (w *WebSocketClient) Close() error {
 	return nil
 }
 
-func (w *WebSocketClient) PriceChan() <-chan PriceData  { return w.priceCh }
-func (w *WebSocketClient) KlineChan() <-chan KlineData  { return w.klineCh }
-func (w *WebSocketClient) TradeChan() <-chan TradeData  { return w.tradeCh }
+func (w *WebSocketClient) PriceChan() <-chan PriceData { return w.priceCh }
+func (w *WebSocketClient) KlineChan() <-chan KlineData { return w.klineCh }
+func (w *WebSocketClient) TradeChan() <-chan TradeData { return w.tradeCh }
 func (w *WebSocketClient) ClosedChan() <-chan struct{}  { return w.closedCh }
+
+func (w *WebSocketClient) keepAlive() {
+	ticker := time.NewTicker(wsPingInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ticker.C:
+			w.mu.RLock()
+			conn := w.conn
+			w.mu.RUnlock()
+			if conn == nil {
+				continue
+			}
+			if err := conn.WriteControl(websocket.PingMessage, nil, time.Now().Add(10*time.Second)); err != nil {
+				slog.Debug("websocket keepalive ping failed", "err", err)
+			}
+		case <-w.ctx.Done():
+			return
+		}
+	}
+}
 
 func (w *WebSocketClient) readLoop() {
 	defer close(w.priceCh)
 	defer close(w.klineCh)
 	defer close(w.tradeCh)
 
-	slog.Info("websocket read loop started")
+	backoff := 2 * time.Second
+	for {
+		err := w.readMessages()
+		if w.ctx.Err() != nil {
+			slog.Info("websocket context cancelled")
+			return
+		}
+		slog.Warn("websocket disconnected, reconnecting", "err", err, "backoff", backoff)
+		select {
+		case <-time.After(backoff):
+		case <-w.ctx.Done():
+			return
+		}
+		if err := w.dial(); err != nil {
+			slog.Error("websocket reconnect failed", "err", err)
+			if backoff < 60*time.Second {
+				backoff *= 2
+			}
+			continue
+		}
+		slog.Info("websocket reconnected")
+		backoff = 2 * time.Second
+	}
+}
 
+func (w *WebSocketClient) readMessages() error {
 	for {
 		select {
 		case <-w.ctx.Done():
-			slog.Info("websocket context cancelled, exiting read loop")
-			return
+			return nil
 		default:
 		}
 
@@ -231,16 +285,14 @@ func (w *WebSocketClient) readLoop() {
 		w.mu.RUnlock()
 
 		if conn == nil {
-			slog.Warn("websocket connection is nil, exiting read loop")
-			return
+			return fmt.Errorf("connection is nil")
 		}
 
 		var raw json.RawMessage
 		if err := conn.ReadJSON(&raw); err != nil {
-			slog.Error("websocket read error", "err", err)
-			return
+			return err
 		}
-
+		conn.SetReadDeadline(time.Now().Add(wsReadTimeout))
 		w.processMessage(raw)
 	}
 }
@@ -251,9 +303,6 @@ func (w *WebSocketClient) processMessage(data json.RawMessage) {
 		slog.Debug("failed to unmarshal envelope", "err", err)
 		return
 	}
-
-		util.WriteJSONLog("binance_event.json", env)
-
 
 	payload := env.Data
 	if payload == nil {
@@ -276,8 +325,6 @@ func (w *WebSocketClient) processBookTicker(data json.RawMessage) {
 		slog.Debug("failed to unmarshal bookTicker", "err", err)
 		return
 	}
-
-	slog.Info("price tick", "bid", float64(t.Bid), "bidSize", float64(t.BidSize), "ask", float64(t.Ask), "askSize", float64(t.AskSize))
 
 	select {
 	case w.priceCh <- PriceData{

@@ -7,7 +7,7 @@ import (
 
 func setupLogging() {
 	options := &slog.HandlerOptions{
-		AddSource: true,
+		AddSource: false,
 		Level:     slog.LevelDebug,
 	}
 	handler := slog.NewJSONHandler(os.Stdout, options)
