@@ -49,8 +49,12 @@ type Config struct {
 	StopLossPips   float64
 	TakeProfitPips float64
 
-	// Trading period (M5, M15, M30, H1, H4, D1)
 	Period string
+
+	
+	DevMode bool
+
+	SendTestPosition bool
 }
 
 func Load() (*Config, error) {
@@ -134,6 +138,9 @@ func Load() (*Config, error) {
 
 		// Trading period
 		Period: getEnv("TRADING_PERIOD", "M5"),
+
+		DevMode:          getEnv("DEV_MODE", "false") == "true",
+		SendTestPosition: getEnv("DEV_MODE", "false") == "true" && getEnv("SEND_TEST_POSITION", "false") == "true",
 	}
 
 	return cfg, nil

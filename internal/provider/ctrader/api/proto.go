@@ -400,8 +400,8 @@ func decodeLiveTrendbarEvents(data []byte) []Trendbar {
 // decodeTraderRes extracts account info from a ProtoOATraderRes payload.
 // The balance field uses sint64 (zigzag) encoding; moneyDigits converts to real currency.
 func decodeTraderRes(data []byte) (TraderInfo, bool) {
-	// field 3 in TraderRes is the embedded ProtoOATrader message
-	traderBytes := extractLenField(data, 3)
+	// field 2 in ProtoOATraderRes is the embedded ProtoOATrader message
+	traderBytes := extractLenField(data, 2)
 	if traderBytes == nil {
 		return TraderInfo{}, false
 	}
@@ -446,6 +446,11 @@ func decodeTraderRes(data []byte) (TraderInfo, bool) {
 		}
 	}
 
+	// Reject responses where nothing meaningful decoded — the server sent an
+	// empty or non-trader payload (e.g. only a clientMsgId echo).
+	if rawBalance == 0 && info.AccountID == 0 && info.Leverage == 0 {
+		return TraderInfo{}, false
+	}
 	info.Balance = float64(rawBalance) / math.Pow(10, float64(moneyDigits))
 	return info, true
 }

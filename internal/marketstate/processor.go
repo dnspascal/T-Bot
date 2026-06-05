@@ -89,18 +89,28 @@ func (p *Processor) IsWarmedUp() bool {
 
 // ProcessorManager manages processors for all timeframes of one symbol.
 type ProcessorManager struct {
-	processors map[string]*Processor
-	symbolID   string
-	provider   string
-	repo       Repository
+	processors  map[string]*Processor
+	symbolID    string
+	provider    string
+	repo        Repository
+	warmupSkips map[string]bool
 }
 
 func NewProcessorManager(symbolID, provider string, repo Repository) *ProcessorManager {
 	return &ProcessorManager{
-		processors: make(map[string]*Processor),
-		symbolID:   symbolID,
-		provider:   provider,
-		repo:       repo,
+		processors:  make(map[string]*Processor),
+		symbolID:    symbolID,
+		provider:    provider,
+		repo:        repo,
+		warmupSkips: map[string]bool{"M1": true}, // M1 is watcher-only, always skipped
+	}
+}
+
+// SkipWarmup marks additional timeframes as non-blocking for AllWarmedUp.
+// Used in dev mode to skip H4/D1 when testnet has insufficient historical data.
+func (m *ProcessorManager) SkipWarmup(periods ...string) {
+	for _, p := range periods {
+		m.warmupSkips[p] = true
 	}
 }
 
@@ -151,8 +161,8 @@ func (m *ProcessorManager) GetAllStates() map[string]indicator.MarketState {
 
 func (m *ProcessorManager) AllWarmedUp() bool {
 	for period, processor := range m.processors {
-		if period == "M1" {
-			continue // M1 is watcher-only; don't block strategy on M1 warmup
+		if m.warmupSkips[period] {
+			continue
 		}
 		if !processor.IsWarmedUp() {
 			return false

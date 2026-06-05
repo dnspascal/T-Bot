@@ -13,28 +13,33 @@ type Manager struct {
 	dailyLoss float64
 	dayStart  time.Time
 
-	unitsPerMicroLot int64
-	minVolume        int64
-	maxVolume        int64
+	unitsPerMicroLot    int64
+	minVolume           int64
+	maxVolume           int64
+	pipValuePerMicroLot float64 // USD value of 1 pip on 1 micro lot; forex≈0.10, BTC≈1e-7
 }
 
 func New(riskPercent, maxDailyLoss float64) *Manager {
 	return &Manager{
-		riskPercent:      riskPercent,
-		maxDailyLoss:     maxDailyLoss,
-		dayStart:         today(),
-		unitsPerMicroLot: 1000,       // CTrader default: 1 micro lot = 1,000 broker units
-		minVolume:        1000,        // minimum 1 micro lot
-		maxVolume:        5_000_000,
+		riskPercent:         riskPercent,
+		maxDailyLoss:        maxDailyLoss,
+		dayStart:            today(),
+		unitsPerMicroLot:    1000,  // CTrader: 1 micro lot = 1,000 broker units
+		minVolume:           1000,
+		maxVolume:           5_000_000,
+		pipValuePerMicroLot: 0.10, // EURUSD default: $0.10/pip/micro-lot
 	}
 }
 
-// SetVolumeConfig overrides the per-provider volume scaling.
-// Binance: unitsPerMicroLot=100_000 (satoshi-scale), CTrader: 1_000.
-func (m *Manager) SetVolumeConfig(unitsPerMicroLot, minVolume, maxVolume int64) {
+// SetVolumeConfig overrides per-provider volume scaling.
+// pipValue: USD value of 1 pip on 1 micro lot.
+//   CTrader EURUSD: 0.10  (0.0001 × 1000 broker units = $0.10)
+//   Binance BTCUSDT: 1e-7 (0.0001 × 100_000 satoshis / 100_000_000 = 1e-7)
+func (m *Manager) SetVolumeConfig(unitsPerMicroLot, minVolume, maxVolume int64, pipValue float64) {
 	m.unitsPerMicroLot = unitsPerMicroLot
 	m.minVolume = minVolume
 	m.maxVolume = maxVolume
+	m.pipValuePerMicroLot = pipValue
 }
 
 var dsmLocation, _ = time.LoadLocation("Africa/Dar_es_Salaam")
@@ -47,8 +52,7 @@ func (m *Manager) PositionSize(balance, stopLossPips float64) (int64, error) {
 
 	riskAmount := balance * (m.riskPercent / 100)
 
-	pipValuePerMicroLot := 0.10
-	microLots := riskAmount / (stopLossPips * pipValuePerMicroLot)
+	microLots := riskAmount / (stopLossPips * m.pipValuePerMicroLot)
 
 	volume := int64(microLots * float64(m.unitsPerMicroLot))
 	volume = max(m.minVolume, min(volume, m.maxVolume))

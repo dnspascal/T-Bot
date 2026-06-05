@@ -110,8 +110,12 @@ func (c *CTrader) Auth(ctx context.Context) (*provider.AuthResult, error) {
 
 	fetchStart := time.Now()
 	traderInfo, err := c.client.FetchAccountInfo()
-	if err != nil {
-		slog.Warn("FetchAccountInfo failed, using configured initial balance", "err", err, "balance", c.cfg.InitialBalance)
+	if err != nil || traderInfo.Balance == 0 {
+		if err != nil {
+			slog.Warn("FetchAccountInfo failed, using configured initial balance", "err", err, "balance", c.cfg.InitialBalance)
+		} else {
+			slog.Warn("FetchAccountInfo returned empty balance (demo server limitation), using configured initial balance", "balance", c.cfg.InitialBalance)
+		}
 		traderInfo = api.TraderInfo{Balance: c.cfg.InitialBalance}
 	}
 
@@ -452,6 +456,10 @@ func (c *CTrader) CandleChan() <-chan provider.Candle {
 
 		for bar := range c.client.TrendbarCh {
 			period := api.PeriodToString(bar.Period)
+			if period == "UNKNOWN" {
+				slog.Warn("ctrader: trendbar with unknown period", "periodCode", bar.Period)
+				continue
+			}
 			current := provider.Candle{
 				Timeframe:  period,
 				OpenTime:   bar.OpenTime,
@@ -464,7 +472,6 @@ func (c *CTrader) CandleChan() <-chan provider.Candle {
 			}
 
 			if prev, ok := pending[period]; ok && prev.openTime != bar.OpenTime {
-				// A new bar started — the previous one is now closed; emit it.
 				out <- prev.candle
 			}
 			pending[period] = pendingBar{openTime: bar.OpenTime, candle: current}

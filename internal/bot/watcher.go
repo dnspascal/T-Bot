@@ -5,11 +5,11 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"time"
 
 	"github.com/denismgaya/t-bot/internal/indicator"
 )
 
-// peakDrawbackThreshold: if price gives back this % of the peak gain, signal 1 fires.
 const peakDrawbackThreshold = 40.0
 
 // signalsToClose: how many reversal signals must agree before we close the position.
@@ -18,8 +18,6 @@ const signalsToClose = 3
 // signalsToReduce: how many signals trigger a soft close (tier 2+ positions only).
 const signalsToReduce = 2
 
-// watchPositions is called on every M1 candle close.
-// It updates high-water marks and checks each open position for reversal signals.
 func (b *Bot) watchPositions(ctx context.Context, ms indicator.MarketState) {
 	for _, pos := range b.registry.All() {
 		// Keep MaxFavorable and MaxAdverse current.
@@ -36,14 +34,7 @@ func (b *Bot) watchPositions(ctx context.Context, ms indicator.MarketState) {
 			continue
 		}
 
-		slog.Info("reversal signals detected",
-			"posID", pos.ProviderPositionID,
-			"side", pos.Side,
-			"count", n,
-			"signals", strings.Join(signals, ", "),
-			"maxFavorable", fmt.Sprintf("%.5f", pos.MaxFavorable),
-			"currentPrice", fmt.Sprintf("%.5f", ms.Close),
-		)
+		slog.Info("reversal signals detected")
 
 		reason := strings.Join(signals, ",")
 		switch {
@@ -99,8 +90,7 @@ func countReversalSignals(ms indicator.MarketState, pos trackedPosition) (int, [
 	return len(signals), signals
 }
 
-// peakDrawbackPct returns what percentage of the peak gain has been given back.
-// Returns 0 if the position was never in profit.
+
 func peakDrawbackPct(pos trackedPosition, currentPrice float64) float64 {
 	if pos.OpenPrice == 0 {
 		return 0
@@ -127,11 +117,83 @@ func peakDrawbackPct(pos trackedPosition, currentPrice float64) float64 {
 	return (gaveBack / peakGain) * 100
 }
 
+func (b *Bot) logM1State(ctx context.Context, currentPrice float64) {
+	positions := b.registry.All()
+	count := len(positions)
+	provider := b.provider.Name()
+	var totalUnrealized float64
+
+	for _, pos := range positions {
+		oldFav := pos.MaxFavorable
+		oldAdv := pos.MaxAdverse
+
+		b.registry.UpdatePeaks(pos.ProviderPositionID, currentPrice)
+
+		pos, ok := b.registry.Get(pos.ProviderPositionID)
+		if !ok {
+			continue
+		}
+
+		var unrealized float64
+		if pos.Side == "BUY" {
+			unrealized = b.unrealizedUSD(currentPrice-pos.OpenPrice, pos.Volume)
+		} else {
+			unrealized = b.unrealizedUSD(pos.OpenPrice-currentPrice, pos.Volume)
+		}
+		totalUnrealized += unrealized
+
+		drawback := peakDrawbackPct(pos, currentPrice)
+		slog.Info("M1 position state",
+			"provider", provider,
+			"positions", count,
+			"posID", pos.ProviderPositionID,
+			"side", pos.Side,
+			"open", pos.OpenPrice,
+			"price", currentPrice,
+			"pnlUSD", fmt.Sprintf("%+.4f", unrealized),
+			"peakFavBefore", oldFav,
+			"peakFavAfter", pos.MaxFavorable,
+			"peakAdvBefore", oldAdv,
+			"peakAdvAfter", pos.MaxAdverse,
+			"drawbackPct", fmt.Sprintf("%.1f%%", drawback),
+		)
+
+		if drawback >= peakDrawbackThreshold {
+			reason := fmt.Sprintf("peak_drawback=%.0f%%", drawback)
+			slog.Info("peak drawback — closing position",
+				"posID", pos.ProviderPositionID,
+				"side", pos.Side,
+				"drawback", fmt.Sprintf("%.0f%%", drawback),
+			)
+			b.closeTrackedPosition(ctx, pos, reason)
+		}
+	}
+
+	if count > 1 {
+		slog.Info("M1 total P&L",
+			"provider", provider,
+			"positions", count,
+			"totalPnlUSD", fmt.Sprintf("%+.4f", totalUnrealized),
+		)
+	}
+}
+
 func (b *Bot) closeTrackedPosition(ctx context.Context, pos trackedPosition, reason string) {
 	if _, err := b.provider.ClosePosition(ctx, pos.ProviderPositionID, pos.Volume); err != nil {
 		slog.Error("watcher: ClosePosition failed",
 			"posID", pos.ProviderPositionID, "err", err,
 		)
+		// INCORRECT_BOUNDARIES means the broker already closed the position (e.g. SL hit while bot was offline).
+		// Remove from registry and mark closed in DB so reconcile doesn't reload it on next restart.
+		if strings.Contains(err.Error(), "INCORRECT_BOUNDARIES") {
+			slog.Warn("watcher: position already gone at broker — purging",
+				"posID", pos.ProviderPositionID,
+			)
+			b.registry.Remove(pos.ProviderPositionID)
+			if dbErr := b.positions.Close(ctx, b.provider.Name(), pos.ProviderPositionID, time.Now(), nil, nil); dbErr != nil {
+				slog.Error("watcher: failed to mark orphaned position closed in DB", "posID", pos.ProviderPositionID, "err", dbErr)
+			}
+		}
 		return
 	}
 	b.pendingCloseReasons[pos.ProviderPositionID] = reason

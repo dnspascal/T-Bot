@@ -29,14 +29,27 @@ func initializeBot(ctx context.Context, cfg *config.Config, svc *Services, prov 
 		log.Fatal("load daily pnl:", err)
 	}
 	riskMgr := risk.New(cfg.RiskPercent, cfg.MaxDailyLoss)
-	if prov.Name() == "binance" {
-		riskMgr.SetVolumeConfig(100_000, 1000, 5_000_000)
+	switch prov.Name() {
+	case "ctrader":
+		// cTrader API: 100,000 units = 1 micro lot (0.01 lots). Matches V1.
+		// pipValue=0.10: 1 pip on 0.01 lots EURUSD = $0.10/pip.
+		// min=100,000 (1 micro lot), max=5,000,000 (50 micro lots = 0.5 lots).
+		riskMgr.SetVolumeConfig(100_000, 100_000, 5_000_000, 0.10)
+	case "binance":
+		// unitsPerMicroLot=100_000 satoshis (0.001 BTC per micro lot).
+		// pipValue=1e-7: 0.0001 price move × 0.001 BTC = $0.0000001/pip/micro-lot.
+		// minVolume=20_000 satoshis (0.0002 BTC ≈ $12 at $60k) clears NOTIONAL filter.
+		riskMgr.SetVolumeConfig(100_000, 20_000, 5_000_000, 1e-7)
 	}
 	if todayLoss < 0 {
 		riskMgr.RestoreLoss(-todayLoss)
 	}
 
 	processorMgr := marketstate.NewProcessorManager(symbolUUID, prov.Name(), svc.Repos.MarketState)
+	if cfg.DevMode {
+		processorMgr.SkipWarmup("H4", "D1")
+		slog.Info("dev mode: H4 and D1 warmup not required", "provider", prov.Name())
+	}
 
 	for _, period := range config.TradingPeriods {
 		buf := marketstate.NewMemoryCandleBuffer(21)

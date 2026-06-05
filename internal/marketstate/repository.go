@@ -50,6 +50,11 @@ func (r *PostgresRepository) Insert(ctx context.Context, state indicator.MarketS
 		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24)
 		ON CONFLICT (symbol_id, provider, period, bar_time)
 		DO UPDATE SET
+			open = EXCLUDED.open,
+			high = EXCLUDED.high,
+			low = EXCLUDED.low,
+			close = EXCLUDED.close,
+			volume = EXCLUDED.volume,
 			processing_us = EXCLUDED.processing_us,
 			ema_fast = EXCLUDED.ema_fast,
 			ema_slow = EXCLUDED.ema_slow,

@@ -213,14 +213,7 @@ func (c *Client) handleMessage(payloadType uint32, payload []byte) {
 		}
 		
 		for _, bar := range decodeLiveTrendbarEvents(payload) {
-			slog.Debug("live trendbar received",
-				"period", PeriodToString(bar.Period),
-				"openTime", bar.OpenTime,
-				"open", bar.Open,
-				"high", bar.High,
-				"low", bar.Low,
-				"close", bar.Close,
-			)
+	
 			select {
 			case c.TrendbarCh <- bar:
 			default:
@@ -251,7 +244,15 @@ func (c *Client) handleMessage(payloadType uint32, payload []byte) {
 			default:
 			}
 		} else {
-			slog.Warn("decodeTraderRes failed — trader field not found in payload")
+			// Server sent a ProtoOATraderRes with no usable trader data (demo
+			// accounts on some brokers echo only a clientMsgId). Unblock
+			// FetchAccountInfo immediately so it returns to the fallback balance
+			// rather than waiting for the full 10-second timeout.
+			slog.Warn("decodeTraderRes: server returned no trader data — falling back to configured balance")
+			select {
+			case c.traderResCh <- TraderInfo{}:
+			default:
+			}
 		}
 
 	case ProtoOAReconcileRes:

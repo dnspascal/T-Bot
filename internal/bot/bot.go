@@ -55,8 +55,6 @@ type Bot struct {
 	lastCandleOpenTime int64
 	lastCandleClose    float64
 
-	// pendingCloseReasons maps providerPositionID → close reason for positions the
-	// watcher explicitly closed, so recordCloseFill can write the right reason.
 	pendingCloseReasons map[string]string
 
 	db        *pgxpool.Pool
@@ -121,7 +119,21 @@ func New(
 }
 
 func (b *Bot) Run(ctx context.Context, startedAt time.Time) {
+	b.reconcileOpenPositions(ctx)
+
 	go b.tokenRefresher(ctx)
+	if b.provider.Name() == "ctrader" {
+		go b.weekendPositionCloser(ctx)
+	}
+
+	priceCh := b.provider.PriceChan()
+	candleCh := b.provider.CandleChan()
+	execCh := b.provider.ExecutionChan()
+	discCh := b.provider.DisconnectedChan()
+
+	if b.cfg.SendTestPosition {
+		b.sendTestPosition(ctx)
+	}
 
 	for {
 		select {
@@ -132,20 +144,103 @@ func (b *Bot) Run(ctx context.Context, startedAt time.Time) {
 			slog.Info("shutdown complete", "uptimeMs", ms(startedAt))
 			return
 
-		case price := <-b.provider.PriceChan():
+		case price := <-priceCh:
 			b.onTick(ctx, price)
 
-		case c := <-b.provider.CandleChan():
+		case c := <-candleCh:
 			b.onCandleReceived(ctx, c)
 
-		case exec := <-b.provider.ExecutionChan():
+		case exec := <-execCh:
 			b.onExecution(ctx, exec)
 
-		case <-b.provider.DisconnectedChan():
+		case <-discCh:
 			slog.Error("provider connection lost — bot stopping")
 			return
 		}
 	}
+}
+
+func (b *Bot) reconcileOpenPositions(ctx context.Context) {
+	dbPositions, err := b.positions.OpenByProvider(ctx, b.provider.Name())
+	if err != nil {
+		slog.Error("startup reconcile: failed to query open positions", "err", err)
+		return
+	}
+	if len(dbPositions) == 0 {
+		return
+	}
+
+	brokerOpen := make(map[string]bool)
+	brokerPositions, err := b.provider.ReconcilePositions(ctx)
+	if err != nil {
+		slog.Warn("startup reconcile: could not fetch broker positions, trusting DB",
+			"provider", b.provider.Name(), "err", err,
+		)
+	} else {
+		for _, bp := range brokerPositions {
+			brokerOpen[bp.PositionID] = true
+		}
+	}
+
+	loaded, purged := 0, 0
+	for _, p := range dbPositions {
+		if p.ProviderPositionID == "" {
+			slog.Warn("startup reconcile: skipping position with empty provider ID",
+				"provider", b.provider.Name(), "dbID", p.ID,
+			)
+			continue
+		}
+
+		// If broker confirms it's closed, mark DB and skip.
+		if len(brokerOpen) > 0 && !brokerOpen[p.ProviderPositionID] {
+			slog.Warn("startup reconcile: position closed at broker while bot was offline — purging",
+				"provider", b.provider.Name(), "posID", p.ProviderPositionID,
+			)
+			if dbErr := b.positions.Close(ctx, b.provider.Name(), p.ProviderPositionID, time.Now(), nil, nil); dbErr != nil {
+				slog.Error("startup reconcile: failed to mark position closed in DB", "posID", p.ProviderPositionID, "err", dbErr)
+			}
+			purged++
+			continue
+		}
+
+		var openPrice, sl, tp float64
+		if p.OpenPrice != nil {
+			openPrice = *p.OpenPrice
+		}
+		if p.CurrentSL != nil {
+			sl = *p.CurrentSL
+		}
+		if p.CurrentTP != nil {
+			tp = *p.CurrentTP
+		}
+		var openTime time.Time
+		if p.OpenTimestamp != nil {
+			openTime = *p.OpenTimestamp
+		}
+		b.registry.Register(trackedPosition{
+			ProviderPositionID: p.ProviderPositionID,
+			Side:               p.Side,
+			Volume:             p.Volume,
+			OpenPrice:          openPrice,
+			SLPrice:            sl,
+			TPPrice:            tp,
+			OpenTime:           openTime,
+			Tier:               0,
+		})
+		slog.Info("startup reconcile: loaded open position",
+			"provider", b.provider.Name(),
+			"posID", p.ProviderPositionID,
+			"side", p.Side,
+			"openPrice", openPrice,
+			"volume", p.Volume,
+		)
+		loaded++
+	}
+	slog.Info("startup reconcile complete",
+		"provider", b.provider.Name(),
+		"loaded", loaded,
+		"purged", purged,
+	)
 }
 
 func (b *Bot) onCandleReceived(ctx context.Context, c provider.Candle) {
@@ -162,11 +257,8 @@ func (b *Bot) onCandleReceived(ctx context.Context, c provider.Candle) {
 
 	switch c.Timeframe {
 	case "M1":
-		// M1 drives the watcher only — faster reversal detection on open positions.
 		if b.registry.Count() > 0 {
-			if m1, ok := b.marketStates[b.symbolUUID]["M1"]; ok {
-				b.watchPositions(ctx, m1)
-			}
+			// b.logM1State(ctx, c.Close)
 		}
 	case "M5":
 		if c.OpenTime != b.lastCandleOpenTime {
@@ -220,17 +312,7 @@ func (b *Bot) processClosedCandle(ctx context.Context, _ float64) {
 		slog.Error("insert signal failed", "err", err)
 	}
 
-	slog.Info("candle closed",
-		"signal", result.Signal,
-		"confluence", result.Confluence,
-		"tier", result.Tier,
-		"regime", m5.Regime,
-		"adx", fmt.Sprintf("%.1f", m5.ADX),
-		"rsi", fmt.Sprintf("%.1f", m5.RSI),
-		"atr", fmt.Sprintf("%.2f", m5.ATR),
-		"openPositions", b.registry.Count(),
-		"reason", result.Reason,
-	)
+
 
 	if result.Signal == "HOLD" {
 		return
@@ -240,11 +322,11 @@ func (b *Bot) processClosedCandle(ctx context.Context, _ float64) {
 }
 
 // unrealizedUSD converts a signed price difference and volume to USD P&L.
-// CTrader: volume is in broker units (1,000 = 1 micro lot = $0.10/pip; pip = 0.0001).
-// Binance: volume is in satoshis.
+// CTrader: 100,000 API units = 1 micro lot (0.01 lots). For EURUSD: P&L = priceDiff × volume / 100.
+// Binance: volume is in satoshis (100,000,000 = 1 BTC).
 func (b *Bot) unrealizedUSD(priceDiff float64, volume int64) float64 {
 	if b.provider.Name() == "ctrader" {
-		return priceDiff * float64(volume) / 1000
+		return priceDiff * float64(volume) / 100
 	}
 	return priceDiff * float64(volume) / 100_000_000
 }
@@ -295,7 +377,16 @@ func (b *Bot) onExecution(ctx context.Context, exec provider.ExecutionEvent) {
 	case "ORDER_FILLED":
 		if exec.Deal.IsClose {
 			b.recordCloseFill(ctx, exec)
-			go b.refreshBalance()
+			// Prefer the balance the broker includes in the close deal; only fall
+			// back to FetchAccountInfo if it is missing (Binance spot, some demos).
+			if exec.Deal.Close != nil && exec.Deal.Close.Balance > 0 {
+				b.balanceMu.Lock()
+				b.balance = exec.Deal.Close.Balance
+				b.balanceMu.Unlock()
+				slog.Info("balance updated from close fill", "balance", exec.Deal.Close.Balance)
+			} else {
+				go b.refreshBalance()
+			}
 		} else {
 			b.pendingOrder = false
 			b.recordOpenFill(ctx, exec)
@@ -320,7 +411,7 @@ func (b *Bot) onTradeSignal(ctx context.Context, result EntryResult, price provi
 		return
 	}
 
-	if ok, reason := b.registry.CanOpen(result.Tier); !ok {
+	if ok, reason := b.registry.CanOpen(result.Tier, result.Signal); !ok {
 		slog.Info("signal skipped — position limit", "reason", reason)
 		return
 	}
@@ -342,7 +433,39 @@ func (b *Bot) onTradeSignal(ctx context.Context, result EntryResult, price provi
 		return
 	}
 
-	sl, tp := result.SLPips, result.TPPips
+	// Binance spot: cap volume so we never try to buy more BTC than the balance can afford.
+	// Without this, small balances produce orders larger than available USDT → instant rejection.
+	if b.provider.Name() == "binance" {
+		mid := b.currentPrice.Mid
+		if mid == 0 {
+			mid = (b.currentPrice.Bid + b.currentPrice.Ask) / 2
+		}
+		if mid > 0 {
+			// Use 90% of balance to leave a small buffer for fees.
+			maxAffordable := int64((b.getBalance() / mid) * 100_000_000 * 0.90)
+			if volume > maxAffordable {
+				slog.Info("binance: volume capped to affordable size",
+					"computed", volume, "capped", maxAffordable, "balance", b.getBalance(), "price", mid,
+				)
+				volume = maxAffordable
+			}
+		}
+	}
+
+	// Compute price levels for DB storage. SLPips/TPPips are pip distances; the DB columns
+	// hold actual price levels so they don't overflow on high-priced symbols like BTCUSDT.
+	mid := price.Mid
+	if mid == 0 {
+		mid = (price.Bid + price.Ask) / 2
+	}
+	var slPrice, tpPrice float64
+	if result.Signal == "BUY" {
+		slPrice = mid - result.SLPips*0.0001
+		tpPrice = mid + result.TPPips*0.0001
+	} else {
+		slPrice = mid + result.SLPips*0.0001
+		tpPrice = mid - result.TPPips*0.0001
+	}
 	sentAt := time.Now()
 
 	orderID, err := b.orders.Insert(ctx, order.Order{
@@ -351,15 +474,15 @@ func (b *Bot) onTradeSignal(ctx context.Context, result EntryResult, price provi
 		SymbolID: b.symbolUUID,
 		Side:     result.Signal,
 		Volume:   volume,
-		SL:       &sl,
-		TP:       &tp,
+		SL:       &slPrice,
+		TP:       &tpPrice,
 		SentAt:   &sentAt,
 	})
 	if err != nil {
 		slog.Error("insert order record failed", "err", err)
 	}
 
-	if _, err = b.provider.PlaceMarketOrder(ctx, result.Signal, volume, sl, tp); err != nil {
+	if _, err = b.provider.PlaceMarketOrder(ctx, result.Signal, volume, result.SLPips, result.TPPips); err != nil {
 		slog.Error("order failed", "err", err)
 		b.orders.UpdateError(ctx, orderID, "SEND_FAILED", err.Error())
 		b.events.Insert(ctx, "error", map[string]any{
@@ -402,8 +525,8 @@ func (b *Bot) onTradeSignal(ctx context.Context, result EntryResult, price provi
 		"tier", result.Tier,
 		"confluence", result.Confluence,
 		"volume", volume,
-		"slPips", fmt.Sprintf("%.1f", sl),
-		"tpPips", fmt.Sprintf("%.1f", tp),
+		"slPips", fmt.Sprintf("%.1f", result.SLPips),
+		"tpPips", fmt.Sprintf("%.1f", result.TPPips),
 	)
 	b.events.Insert(ctx, "order_sent", map[string]any{
 		"order_id":   orderID,
@@ -606,14 +729,19 @@ func (b *Bot) storeCandle(ctx context.Context, c provider.Candle) {
 }
 
 func (b *Bot) onTick(ctx context.Context, price provider.PriceEvent) {
-	b.ticks.Insert(ctx, tick.Tick{
+	b.currentPrice = price
+	t := tick.Tick{
 		SymbolID:     b.symbolUUID,
 		Bid:          price.Bid,
 		Ask:          price.Ask,
 		ReceivedAt:   price.Timestamp,
 		ProcessingUS: time.Since(price.Timestamp).Microseconds(),
-	})
-	b.currentPrice = price
+	}
+	go func() {
+		if err := b.ticks.Insert(context.Background(), t); err != nil {
+			slog.Error("tick insert failed", "err", err)
+		}
+	}()
 }
 
 func (b *Bot) refreshBalance() {
@@ -647,6 +775,38 @@ func (b *Bot) tokenRefresher(ctx context.Context) {
 				continue
 			}
 			slog.Info("credentials refreshed", "provider", b.provider.Name())
+		}
+	}
+}
+
+// weekendPositionCloser closes all open positions at 21:30 UTC on Friday, 30 minutes
+// before the forex market closes at 22:00 UTC. Prevents positions being held over the
+// weekend gap where SL/TP cannot execute.
+func (b *Bot) weekendPositionCloser(ctx context.Context) {
+	ticker := time.NewTicker(1 * time.Minute)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case t := <-ticker.C:
+			utc := t.UTC()
+			if utc.Weekday() != time.Friday {
+				continue
+			}
+			if utc.Hour() != 21 || utc.Minute() != 30 {
+				continue
+			}
+			if b.registry.Count() == 0 {
+				continue
+			}
+			slog.Warn("Friday 21:30 UTC — closing all positions before market close")
+			for _, pos := range b.registry.All() {
+				b.closeTrackedPosition(ctx, pos, "weekend_close")
+			}
+			b.events.Insert(ctx, "weekend_close", map[string]any{
+				"reason": "forex market closes at 22:00 UTC",
+			}, 0)
 		}
 	}
 }
@@ -692,6 +852,75 @@ func LoadCredential(ctx context.Context, db *pgxpool.Pool, key string) (string, 
 
 func ms(t time.Time) int64 {
 	return time.Since(t).Milliseconds()
+}
+
+
+func (b *Bot) sendTestPosition(ctx context.Context) {
+	if b.pendingOrder || b.registry.Count() > 0 {
+		slog.Info("DEV: test position skipped — order already pending or position open",
+			"provider", b.provider.Name())
+		return
+	}
+
+	// cTrader: 100_000 = 1 lot (broker minimum). Binance: 100_000 satoshis = 0.001 BTC ≈ $60.
+	testVolume := int64(100_000)
+	const (
+		testSLPips float64 = 10.0
+		testTPPips float64 = 20.0
+	)
+
+	slog.Warn("DEV: sending test BUY position",
+		"provider", b.provider.Name(),
+		"symbol", b.symbol,
+		"volume", testVolume,
+		"slPips", testSLPips,
+		"tpPips", testTPPips,
+	)
+
+	sentAt := time.Now()
+	orderID, err := b.orders.Insert(ctx, order.Order{
+		Provider: b.provider.Name(),
+		SymbolID: b.symbolUUID,
+		Side:     "BUY",
+		Volume:   testVolume,
+		SentAt:   &sentAt,
+	})
+	if err != nil {
+		slog.Error("DEV: test order record insert failed", "err", err)
+	}
+
+	if _, err := b.provider.PlaceMarketOrder(ctx, "BUY", testVolume, testSLPips, testTPPips); err != nil {
+		slog.Error("DEV: test position placement failed", "provider", b.provider.Name(), "err", err)
+		b.orders.UpdateError(ctx, orderID, "SEND_FAILED", err.Error())
+		return
+	}
+
+	b.pendingOrder = true
+	b.pendingOrderID = orderID
+	b.pendingOrderSentAt = sentAt
+	b.pendingSide = "BUY"
+	b.pendingTier = TierNormal
+	b.pendingSLPrice = 0
+	b.pendingTPPrice = 0
+	b.pendingATR = 0
+
+	// Binance spot has no execution event — register the position immediately.
+	if b.provider.Name() == "binance" {
+		mid := b.currentPrice.Mid
+		if mid == 0 {
+			mid = (b.currentPrice.Bid + b.currentPrice.Ask) / 2
+		}
+		b.registry.Register(trackedPosition{
+			ProviderPositionID: orderID,
+			Side:               "BUY",
+			Tier:               TierNormal,
+			Volume:             testVolume,
+			OpenPrice:          mid,
+			OpenTime:           sentAt,
+		})
+		b.pendingOrder = false
+		slog.Info("DEV: test position registered (Binance)", "posID", orderID, "openPrice", mid)
+	}
 }
 
 // inferCloseReason returns "tp_hit" or "sl_hit" based on whether cTrader's

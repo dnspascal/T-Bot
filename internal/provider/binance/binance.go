@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"math"
 	"strconv"
 	"time"
 
@@ -182,8 +183,8 @@ func (b *Binance) PlaceMarketOrder(
 		return "", fmt.Errorf("not connected")
 	}
 
-	// Convert volume from satoshis to decimal
-	qty := float64(volume) / 100000000
+	// Convert satoshis to BTC and truncate to 5 decimal places (BTCUSDT LOT_SIZE step = 0.00001).
+	qty := math.Floor(float64(volume)/100_000_000*100000) / 100000
 
 	slog.Info("placing market order", "symbol", b.cfg.BinanceSymbol, "side", side, "qty", qty)
 	orderID, err = b.restClient.PlaceMarketOrder(b.cfg.BinanceSymbol, side, qty)
@@ -290,7 +291,7 @@ func (b *Binance) QueryOpenPositions(ctx context.Context, symbol string) ([]prov
 // ClosePosition closes a spot long position by placing a SELL market order.
 // volume is in satoshis (100_000_000 = 1 BTC). positionID is unused for spot.
 func (b *Binance) ClosePosition(ctx context.Context, positionID string, volume int64) (string, error) {
-	qty := float64(volume) / 100_000_000
+	qty := math.Floor(float64(volume)/100_000_000*100000) / 100000
 	orderID, err := b.restClient.PlaceMarketOrder(b.cfg.BinanceSymbol, "SELL", qty)
 	if err != nil {
 		return "", fmt.Errorf("ClosePosition (SELL): %w", err)
@@ -444,8 +445,6 @@ func (b *Binance) forwardPriceEvents() {
 
 func (b *Binance) forwardKlineEvents() {
 	for kline := range b.wsClient.KlineChan() {
-
-		slog.Info("Candle received", "Timeframe", kline.Interval)
 
 		select {
 		case b.candleCh <- provider.Candle{

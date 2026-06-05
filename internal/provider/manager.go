@@ -68,10 +68,6 @@ func (m *Manager) AuthAllProviders(ctx context.Context) (map[string]*AuthResult,
 
 	var wg sync.WaitGroup
 	for name, prov := range providersCopy {
-		if prov.Name() == "ctrader" {
-			continue
-		}
-
 		wg.Add(1)
 		go func(name string, p Provider) {
 			defer wg.Done()

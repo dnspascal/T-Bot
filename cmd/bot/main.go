@@ -122,6 +122,11 @@ func startBotForProvider(
 		}
 	}()
 
+	if authResult == nil {
+		slog.Error("auth result missing — provider auth failed, bot will not start", "provider", prov.Name(), "symbol", symbol)
+		return
+	}
+
 	symbolUUID, err := svc.Lookup.Get(symbol)
 	if err != nil {
 		slog.Error("get symbol uuid failed", "provider", prov.Name(), "symbol", symbol, "err", err)
