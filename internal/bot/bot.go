@@ -42,7 +42,6 @@ type Bot struct {
 	balanceMu sync.Mutex
 	balance   float64
 
-	// Single in-flight order at a time.
 	pendingOrder       bool
 	pendingOrderID     string
 	pendingOrderSentAt time.Time
@@ -56,6 +55,8 @@ type Bot struct {
 	lastCandleClose    float64
 
 	pendingCloseReasons map[string]string
+
+	tickCh chan tick.Tick // bounded channel for async tick persistence
 
 	db        *pgxpool.Pool
 	lookup    *symbol.SymbolLookup
@@ -104,6 +105,7 @@ func New(
 		balance:        balance,
 		registry:            newPositionRegistry(),
 		pendingCloseReasons: make(map[string]string),
+		tickCh:              make(chan tick.Tick, 500),
 		lookup:         lookup,
 		ticks:          ticks,
 		candles:        candles,
@@ -122,6 +124,7 @@ func (b *Bot) Run(ctx context.Context, startedAt time.Time) {
 	b.reconcileOpenPositions(ctx)
 
 	go b.tokenRefresher(ctx)
+	go b.tickWriter(ctx)
 	if b.provider.Name() == "ctrader" {
 		go b.weekendPositionCloser(ctx)
 	}
@@ -191,7 +194,6 @@ func (b *Bot) reconcileOpenPositions(ctx context.Context) {
 			continue
 		}
 
-		// If broker confirms it's closed, mark DB and skip.
 		if len(brokerOpen) > 0 && !brokerOpen[p.ProviderPositionID] {
 			slog.Warn("startup reconcile: position closed at broker while bot was offline — purging",
 				"provider", b.provider.Name(), "posID", p.ProviderPositionID,
@@ -225,7 +227,7 @@ func (b *Bot) reconcileOpenPositions(ctx context.Context) {
 			SLPrice:            sl,
 			TPPrice:            tp,
 			OpenTime:           openTime,
-			Tier:               0,
+			Tier:               p.Tier,
 		})
 		slog.Info("startup reconcile: loaded open position",
 			"provider", b.provider.Name(),
@@ -258,7 +260,8 @@ func (b *Bot) onCandleReceived(ctx context.Context, c provider.Candle) {
 	switch c.Timeframe {
 	case "M1":
 		if b.registry.Count() > 0 {
-			// b.logM1State(ctx, c.Close)
+			b.checkPeakDrawback(ctx, c.Close) 
+			b.logM1State(c.Close)             
 		}
 	case "M5":
 		if c.OpenTime != b.lastCandleOpenTime {
@@ -288,13 +291,10 @@ func (b *Bot) processClosedCandle(ctx context.Context, _ float64) {
 		mid = (b.currentPrice.Bid + b.currentPrice.Ask) / 2
 	}
 
-	// Step 1: log unrealized P&L for every open position
 	b.logUnrealizedPnL(mid)
 
-	// Step 2: check open positions for exit conditions
 	b.watchPositions(ctx, m5)
 
-	// Step 3: evaluate entry — always insert signal for full audit trail
 	evalStart := time.Now()
 	result := evaluateEntry(states, mid)
 
@@ -321,9 +321,6 @@ func (b *Bot) processClosedCandle(ctx context.Context, _ float64) {
 	b.onTradeSignal(ctx, result, b.currentPrice, signalID)
 }
 
-// unrealizedUSD converts a signed price difference and volume to USD P&L.
-// CTrader: 100,000 API units = 1 micro lot (0.01 lots). For EURUSD: P&L = priceDiff × volume / 100.
-// Binance: volume is in satoshis (100,000,000 = 1 BTC).
 func (b *Bot) unrealizedUSD(priceDiff float64, volume int64) float64 {
 	if b.provider.Name() == "ctrader" {
 		return priceDiff * float64(volume) / 100
@@ -416,10 +413,10 @@ func (b *Bot) onTradeSignal(ctx context.Context, result EntryResult, price provi
 		return
 	}
 
-	if !b.riskMgr.CanTrade() {
+	if !b.riskMgr.CanTrade(b.getBalance()) {
 		slog.Warn("daily loss limit hit — signal skipped",
-			"dailyLoss", b.riskMgr.DailyLoss(),
-			"limit", b.cfg.MaxDailyLoss,
+			"dailyLoss", fmt.Sprintf("$%.2f", b.riskMgr.DailyLoss()),
+			"limitPct", fmt.Sprintf("%.0f%%", b.riskMgr.MaxDailyLossPct()),
 		)
 		b.events.Insert(ctx, "daily_limit_hit", map[string]any{
 			"daily_loss": b.riskMgr.DailyLoss(),
@@ -450,22 +447,17 @@ func (b *Bot) onTradeSignal(ctx context.Context, result EntryResult, price provi
 				volume = maxAffordable
 			}
 		}
+		// After the cap, check we still meet the Binance NOTIONAL minimum (20,000 satoshis).
+		if volume < 20_000 {
+			slog.Warn("binance: volume below minimum after cap — signal skipped",
+				"volume", volume, "balance", b.getBalance(),
+			)
+			return
+		}
 	}
 
-	// Compute price levels for DB storage. SLPips/TPPips are pip distances; the DB columns
-	// hold actual price levels so they don't overflow on high-priced symbols like BTCUSDT.
-	mid := price.Mid
-	if mid == 0 {
-		mid = (price.Bid + price.Ask) / 2
-	}
-	var slPrice, tpPrice float64
-	if result.Signal == "BUY" {
-		slPrice = mid - result.SLPips*0.0001
-		tpPrice = mid + result.TPPips*0.0001
-	} else {
-		slPrice = mid + result.SLPips*0.0001
-		tpPrice = mid - result.TPPips*0.0001
-	}
+	slPrice := result.SLPrice
+	tpPrice := result.TPPrice
 	sentAt := time.Now()
 
 	orderID, err := b.orders.Insert(ctx, order.Order{
@@ -500,7 +492,6 @@ func (b *Bot) onTradeSignal(ctx context.Context, result EntryResult, price provi
 	b.pendingTPPrice = result.TPPrice
 	b.pendingATR = result.ATR
 
-	// Binance spot: no execution event will come, so register the position immediately.
 	if b.provider.Name() == "binance" {
 		mid := price.Mid
 		if mid == 0 {
@@ -564,6 +555,7 @@ func (b *Bot) recordOpenFill(ctx context.Context, exec provider.ExecutionEvent) 
 		SymbolID:           b.symbolUUID,
 		Side:               b.pendingSide,
 		Volume:             deal.FilledVolume,
+		Tier:               b.pendingTier,
 		OpenPrice:          &deal.ExecutionPrice,
 		Status:             "open",
 		OpenTimestamp:      &openTime,
@@ -697,7 +689,7 @@ func (b *Bot) recordCloseFill(ctx context.Context, exec provider.ExecutionEvent)
 	}
 
 	if realized < 0 {
-		b.riskMgr.RecordLoss(-realized)
+		b.riskMgr.RecordLoss(-realized, b.getBalance())
 	}
 
 	slog.Info("position closed",
@@ -728,7 +720,7 @@ func (b *Bot) storeCandle(ctx context.Context, c provider.Candle) {
 	}
 }
 
-func (b *Bot) onTick(ctx context.Context, price provider.PriceEvent) {
+func (b *Bot) onTick(_ context.Context, price provider.PriceEvent) {
 	b.currentPrice = price
 	t := tick.Tick{
 		SymbolID:     b.symbolUUID,
@@ -737,11 +729,36 @@ func (b *Bot) onTick(ctx context.Context, price provider.PriceEvent) {
 		ReceivedAt:   price.Timestamp,
 		ProcessingUS: time.Since(price.Timestamp).Microseconds(),
 	}
-	go func() {
-		if err := b.ticks.Insert(context.Background(), t); err != nil {
-			slog.Error("tick insert failed", "err", err)
+	select {
+	case b.tickCh <- t:
+	default:
+		slog.Warn("tick channel full — dropping tick")
+	}
+}
+
+// tickWriter drains the tick channel and persists ticks one at a time.
+// A single goroutine prevents unbounded goroutine growth under high tick rates.
+func (b *Bot) tickWriter(ctx context.Context) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case t := <-b.tickCh:
+			if err := b.ticks.Insert(ctx, t); err != nil {
+				slog.Error("tick insert failed", "err", err)
+			}
 		}
-	}()
+	}
+}
+
+// Reset clears transient per-connection state so Run() can be called again after
+// a reconnect without carrying over stale flags from the dropped session.
+func (b *Bot) Reset() {
+	b.pendingOrder = false
+	b.pendingOrderID = ""
+	b.pendingCloseReasons = make(map[string]string)
+	b.lastCandleOpenTime = 0
+	b.lastCandleClose = 0
 }
 
 func (b *Bot) refreshBalance() {
@@ -763,7 +780,8 @@ func (b *Bot) getBalance() float64 {
 }
 
 func (b *Bot) tokenRefresher(ctx context.Context) {
-	ticker := time.NewTicker(25 * 24 * time.Hour)
+	// cTrader access tokens expire after 1 hour; refresh at 55 min to stay ahead.
+	ticker := time.NewTicker(55 * time.Minute)
 	defer ticker.Stop()
 	for {
 		select {
@@ -811,8 +829,6 @@ func (b *Bot) weekendPositionCloser(ctx context.Context) {
 	}
 }
 
-// buildMarketStateSnapshots converts the current cached states for all timeframes
-// into the compact snapshot stored in signals.checked_market_states.
 func buildMarketStateSnapshots(states map[string]indicator.MarketState) map[string]signal.MarketStateSnapshot {
 	out := make(map[string]signal.MarketStateSnapshot, len(states))
 	for period, ms := range states {
@@ -835,7 +851,7 @@ func buildMarketStateSnapshots(states map[string]indicator.MarketState) map[stri
 	return out
 }
 
-func saveCredential(ctx context.Context, db *pgxpool.Pool, key, value string) error {
+func SaveCredential(ctx context.Context, db *pgxpool.Pool, key, value string) error {
 	_, err := db.Exec(ctx, `
 		INSERT INTO bot_credentials (key, value)
 		VALUES ($1, $2)
@@ -923,9 +939,6 @@ func (b *Bot) sendTestPosition(ctx context.Context) {
 	}
 }
 
-// inferCloseReason returns "tp_hit" or "sl_hit" based on whether cTrader's
-// automatic order produced a gain or a loss. Used when the bot didn't initiate
-// the close itself (i.e., no entry in pendingCloseReasons).
 func inferCloseReason(grossProfit float64) string {
 	if grossProfit >= 0 {
 		return "tp_hit"

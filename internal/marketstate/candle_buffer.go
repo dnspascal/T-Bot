@@ -50,7 +50,7 @@ func NewMemoryCandleBuffer(maxSize int) *MemoryCandleBuffer {
 
 // AddCandle adds a new candle and drops oldest if buffer is full
 func (b *MemoryCandleBuffer) AddCandle(open, high, low, close float64, volume int64) {
-	b.candles = append(b.candles, indicator.OHLC{High: high, Low: low, Close: close})
+	b.candles = append(b.candles, indicator.OHLC{Open: open, High: high, Low: low, Close: close})
 	b.closes = append(b.closes, close)
 	b.volumes = append(b.volumes, volume)
 
@@ -142,7 +142,7 @@ func (b *DatabaseCandleBuffer) LoadRecent(ctx context.Context, count int) error 
 		if err := rows.Scan(&open, &high, &low, &close, &volume, &barTime); err != nil {
 			return err
 		}
-		tempCandles = append(tempCandles, indicator.OHLC{High: high, Low: low, Close: close})
+		tempCandles = append(tempCandles, indicator.OHLC{Open: open, High: high, Low: low, Close: close})
 		tempCloses = append(tempCloses, close)
 		tempVolumes = append(tempVolumes, volume)
 		barTimes = append(barTimes, barTime)
@@ -164,7 +164,7 @@ func (b *DatabaseCandleBuffer) LoadRecent(ctx context.Context, count int) error 
 
 // AddCandle adds a new candle from live stream and drops oldest if needed
 func (b *DatabaseCandleBuffer) AddCandle(open, high, low, close float64, volume int64) {
-	b.candles = append(b.candles, indicator.OHLC{High: high, Low: low, Close: close})
+	b.candles = append(b.candles, indicator.OHLC{Open: open, High: high, Low: low, Close: close})
 	b.closes = append(b.closes, close)
 	b.volumes = append(b.volumes, volume)
 

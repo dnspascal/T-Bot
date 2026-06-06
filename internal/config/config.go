@@ -42,7 +42,7 @@ type Config struct {
 
 	// Risk settings
 	RiskPercent    float64
-	MaxDailyLoss   float64
+	MaxDailyLossPct float64 // percent of balance, e.g. 2.0 = 2%
 	InitialBalance float64 // fallback balance if FetchAccountInfo fails
 
 	// Strategy settings
@@ -105,9 +105,9 @@ func Load() (*Config, error) {
 		return nil, fmt.Errorf("RISK_PERCENT must be a number: %w", err)
 	}
 
-	maxDailyLoss, err := strconv.ParseFloat(getEnv("MAX_DAILY_LOSS", "2.0"), 64)
+	maxDailyLossPct, err := strconv.ParseFloat(getEnv("MAX_DAILY_LOSS_PCT", "2.0"), 64)
 	if err != nil {
-		return nil, fmt.Errorf("MAX_DAILY_LOSS must be a number: %w", err)
+		return nil, fmt.Errorf("MAX_DAILY_LOSS_PCT must be a number: %w", err)
 	}
 
 	stopLossPips, err := strconv.ParseFloat(getEnv("STOP_LOSS_PIPS", "10.0"), 64)
@@ -126,7 +126,7 @@ func Load() (*Config, error) {
 		Binance:        binanceCfg,
 		InitialBalance: initialBalance,
 		RiskPercent:    riskPercent,
-		MaxDailyLoss:   maxDailyLoss,
+		MaxDailyLossPct: maxDailyLossPct,
 		StopLossPips:   stopLossPips,
 		TakeProfitPips: takeProfitPips,
 

@@ -7,8 +7,8 @@ import (
 
 
 type Manager struct {
-	riskPercent  float64
-	maxDailyLoss float64
+	riskPercent      float64
+	maxDailyLossPct  float64 // percent of balance, e.g. 2.0 = 2%
 
 	dailyLoss float64
 	dayStart  time.Time
@@ -19,15 +19,15 @@ type Manager struct {
 	pipValuePerMicroLot float64 // USD value of 1 pip on 1 micro lot; forex≈0.10, BTC≈1e-7
 }
 
-func New(riskPercent, maxDailyLoss float64) *Manager {
+func New(riskPercent, maxDailyLossPct float64) *Manager {
 	return &Manager{
 		riskPercent:         riskPercent,
-		maxDailyLoss:        maxDailyLoss,
+		maxDailyLossPct:     maxDailyLossPct,
 		dayStart:            today(),
-		unitsPerMicroLot:    1000,  // CTrader: 1 micro lot = 1,000 broker units
+		unitsPerMicroLot:    1000,
 		minVolume:           1000,
 		maxVolume:           5_000_000,
-		pipValuePerMicroLot: 0.10, // EURUSD default: $0.10/pip/micro-lot
+		pipValuePerMicroLot: 0.10,
 	}
 }
 
@@ -67,15 +67,21 @@ func (m *Manager) PositionSizeForTier(balance, stopLossPips float64, tier int) (
 	if err != nil {
 		return 0, err
 	}
-	return min(base*int64(tier+1), 5_000_000), nil
+	return min(base*int64(tier+1), m.maxVolume), nil
 }
 
 
-func (m *Manager) RecordLoss(amount float64) error {
+func (m *Manager) dailyLimit(balance float64) float64 {
+	return balance * (m.maxDailyLossPct / 100)
+}
+
+func (m *Manager) RecordLoss(amount, balance float64) error {
 	m.resetDayIfNeeded()
 	m.dailyLoss += amount
-	if m.dailyLoss >= m.maxDailyLoss {
-		return fmt.Errorf("daily loss limit reached: $%.2f of $%.2f", m.dailyLoss, m.maxDailyLoss)
+	limit := m.dailyLimit(balance)
+	if m.dailyLoss >= limit {
+		return fmt.Errorf("daily loss limit reached: $%.2f of $%.2f (%.0f%% of balance)",
+			m.dailyLoss, limit, m.maxDailyLossPct)
 	}
 	return nil
 }
@@ -84,14 +90,18 @@ func (m *Manager) RestoreLoss(amount float64) {
 	m.dailyLoss = amount
 }
 
-func (m *Manager) CanTrade() bool {
+func (m *Manager) CanTrade(balance float64) bool {
 	m.resetDayIfNeeded()
-	return m.dailyLoss < m.maxDailyLoss
+	return m.dailyLoss < m.dailyLimit(balance)
 }
 
 func (m *Manager) DailyLoss() float64 {
 	m.resetDayIfNeeded()
 	return m.dailyLoss
+}
+
+func (m *Manager) MaxDailyLossPct() float64 {
+	return m.maxDailyLossPct
 }
 
 func (m *Manager) resetDayIfNeeded() {

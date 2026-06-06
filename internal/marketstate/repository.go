@@ -2,6 +2,7 @@ package marketstate
 
 import (
 	"context"
+	"strconv"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -132,7 +133,7 @@ func (r *PostgresRepository) GetLastCandles(ctx context.Context, symbol, timefra
 	query := `
 		SELECT open, high, low, close, volume
 		FROM market_states
-		WHERE symbol = $1 AND timeframe = $2
+		WHERE symbol_id = $1 AND period = $2
 		ORDER BY bar_time DESC
 		LIMIT $3
 	`
@@ -167,13 +168,13 @@ func NewMockRepository() *MockRepository {
 }
 
 func (m *MockRepository) Insert(ctx context.Context, state indicator.MarketState) error {
-	key := state.SymbolID + ":" + state.Provider + ":" + state.Period + ":" + string(rune(state.BarTime))
+	key := state.SymbolID + ":" + state.Provider + ":" + state.Period + ":" + strconv.FormatInt(state.BarTime, 10)
 	m.states[key] = state
 	return nil
 }
 
 func (m *MockRepository) Get(ctx context.Context, symbolID, provider, period string, barTime int64) (indicator.MarketState, error) {
-	key := symbolID + ":" + provider + ":" + period + ":" + string(rune(barTime))
+	key := symbolID + ":" + provider + ":" + period + ":" + strconv.FormatInt(barTime, 10)
 	if state, ok := m.states[key]; ok {
 		return state, nil
 	}

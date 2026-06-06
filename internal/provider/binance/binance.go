@@ -241,8 +241,9 @@ func (b *Binance) FetchAccountInfo(ctx context.Context) (*provider.AccountInfo, 
 	var balance float64
 	for _, bal := range account.Balances {
 		if bal.Asset == binanceQuoteCurrency {
-			val, _ := strconv.ParseFloat(bal.Free, 64)
-			balance += val
+			free, _ := strconv.ParseFloat(bal.Free, 64)
+			locked, _ := strconv.ParseFloat(bal.Locked, 64)
+			balance = free + locked
 			break
 		}
 	}
@@ -272,7 +273,8 @@ func (b *Binance) QueryOpenPositions(ctx context.Context, symbol string) ([]prov
 
 	var positions []provider.Position
 	for _, order := range orders {
-		qty, _ := strconv.ParseInt(order.ExecutedQty, 10, 64)
+		qtyFloat, _ := strconv.ParseFloat(order.ExecutedQty, 64)
+		qty := int64(qtyFloat * 100_000_000) // satoshis
 		price, _ := strconv.ParseFloat(order.Price, 64)
 
 		positions = append(positions, provider.Position{

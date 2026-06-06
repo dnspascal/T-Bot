@@ -76,7 +76,7 @@ func (c *Calculator) Calculate(
 
 	allCloses := append(historicalCloses, close)
 	allVolumes := append(historicalVolumes, volume)
-	allOHLC := append(historicalOHLC, OHLC{High: high, Low: low, Close: close})
+	allOHLC := append(historicalOHLC, OHLC{Open: open, High: high, Low: low, Close: close})
 
 	ms := MarketState{
 		SymbolID: symbolID,

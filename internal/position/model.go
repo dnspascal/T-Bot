@@ -11,6 +11,7 @@ type Position struct {
 	SymbolID           string
 	Side               string // BUY | SELL
 	Volume             int64
+	Tier               int
 	OpenPrice          *float64
 	CurrentSL          *float64
 	CurrentTP          *float64

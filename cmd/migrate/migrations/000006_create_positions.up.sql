@@ -9,6 +9,7 @@ CREATE TABLE positions (
     symbol_id            UUID          NOT NULL REFERENCES symbols(id),
     side                 TEXT          NOT NULL CHECK (side IN ('BUY', 'SELL')),
     volume               BIGINT        NOT NULL,   -- in provider units (e.g. cTrader: 100 = 0.01 lots)
+    tier                 SMALLINT      NOT NULL DEFAULT 0, -- confluence tier (0=normal … 3=very strong)
 
     open_price           NUMERIC(12,5),            -- average entry price
     current_sl           NUMERIC(12,5),            -- current stop loss level

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"log/slog"
 	"sync"
@@ -103,6 +104,10 @@ func main() {
 	}
 
 	wg.Wait()
+
+	if err := provMgr.CloseAllProviders(); err != nil {
+		slog.Warn("provider close errors on shutdown", "err", err)
+	}
 	slog.Info("all bots stopped")
 }
 
@@ -135,7 +140,7 @@ func startBotForProvider(
 
 	botResult := initializeBot(ctx, cfg, svc, prov, symbol, symbolUUID, authResult)
 
-	warmer := marketstate.NewWarmer(prov, botResult.ProcessorMgr, 30)
+	warmer := marketstate.NewWarmer(prov, botResult.ProcessorMgr, 100)
 	if err := warmer.WarmupAllTimeframes(ctx, symbol); err != nil {
 		slog.Error("warm-up failed — bot will not start", "provider", prov.Name(), "err", err)
 		return
@@ -151,11 +156,51 @@ func startBotForProvider(
 		"symbol", symbol,
 		"balance", authResult.Balance,
 		"riskPercent", cfg.RiskPercent,
-		"maxDailyLoss", cfg.MaxDailyLoss,
+		"maxDailyLossPct", fmt.Sprintf("%.0f%%", cfg.MaxDailyLossPct),
 		"startupMs", elapsed(botStart),
 	)
 
-	botResult.Bot.Run(ctx, botStart)
+	const maxReconnects = 5
+	backoff := 15 * time.Second
+
+	for attempt := 0; ; attempt++ {
+		botResult.Bot.Run(ctx, botStart)
+
+		if ctx.Err() != nil {
+			return // graceful shutdown — don't retry
+		}
+		if attempt >= maxReconnects {
+			slog.Error("max reconnects reached — bot stopped", "provider", prov.Name())
+			return
+		}
+
+		slog.Warn("provider disconnected — reconnecting",
+			"provider", prov.Name(), "attempt", attempt+1, "backoff", backoff)
+
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(backoff):
+		}
+
+		if err := prov.Connect(); err != nil {
+			slog.Error("reconnect: Connect failed", "provider", prov.Name(), "err", err)
+		} else if _, err := prov.Auth(ctx); err != nil {
+			slog.Error("reconnect: Auth failed", "provider", prov.Name(), "err", err)
+		} else if err := prov.Setup(); err != nil {
+			slog.Error("reconnect: Setup failed", "provider", prov.Name(), "err", err)
+		} else if err := prov.StartStreaming(); err != nil {
+			slog.Error("reconnect: StartStreaming failed", "provider", prov.Name(), "err", err)
+		} else {
+			slog.Info("reconnected", "provider", prov.Name(), "attempt", attempt+1)
+			backoff = 15 * time.Second // reset on success
+			botResult.Bot.Reset()
+			continue
+		}
+
+		// One of the steps above failed — apply backoff and retry
+		backoff = min(backoff*2, 5*time.Minute)
+	}
 }
 
 func elapsed(t time.Time) int64 {

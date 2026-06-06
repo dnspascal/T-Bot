@@ -33,22 +33,35 @@ func CalculateSupportResistance(ohlc []OHLC) (support, resistance, trendHigh, tr
 	return support, resistance, trendHigh, trendLow
 }
 
-// CalculateBreakoutLevel determines if price broke through previous high/low
-// Returns the level that was broken, or 0 if no breakout
+// CalculateBreakoutLevel returns the swing level that the current candle broke through,
+// or 0 if there is no breakout. Uses a 10-candle lookback (excluding the current candle)
+// so single noisy bars don't trigger a false breakout.
 func CalculateBreakoutLevel(high, low float64, ohlc []OHLC) float64 {
-	if len(ohlc) < 2 {
+	// ohlc includes the current candle at the end — exclude it from the reference window.
+	prior := ohlc[:len(ohlc)-1]
+	if len(prior) < 2 {
 		return 0
 	}
 
-	prevHigh := ohlc[len(ohlc)-2].High
-	prevLow := ohlc[len(ohlc)-2].Low
+	lookback := 10
+	start := max(len(prior)-lookback, 0)
 
-	if high > prevHigh {
-		return prevHigh // Broke through previous resistance
-	}
-	if low < prevLow {
-		return prevLow // Broke through previous support
+	swingHigh := prior[start].High
+	swingLow := prior[start].Low
+	for _, c := range prior[start+1:] {
+		if c.High > swingHigh {
+			swingHigh = c.High
+		}
+		if c.Low < swingLow {
+			swingLow = c.Low
+		}
 	}
 
-	return 0 // No breakout
+	if high > swingHigh {
+		return swingHigh
+	}
+	if low < swingLow {
+		return swingLow
+	}
+	return 0
 }

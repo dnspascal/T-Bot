@@ -20,14 +20,15 @@ func (r *Repository) Upsert(ctx context.Context, p Position) error {
 	const q = `
 		INSERT INTO positions
 			(our_order_id, provider, provider_position_id, provider_acct_id, symbol_id, side, volume,
-			 open_price, current_sl, current_tp, swap, commission, used_margin,
+			 tier, open_price, current_sl, current_tp, swap, commission, used_margin,
 			 status, trailing_stop_loss, guaranteed_stop_loss, label, comment,
 			 open_timestamp, close_timestamp, raw_payload)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)
 		ON CONFLICT (provider, provider_position_id) DO UPDATE SET
 			open_price           = EXCLUDED.open_price,
 			current_sl           = EXCLUDED.current_sl,
 			current_tp           = EXCLUDED.current_tp,
+			tier                 = EXCLUDED.tier,
 			swap                 = EXCLUDED.swap,
 			commission           = EXCLUDED.commission,
 			used_margin          = EXCLUDED.used_margin,
@@ -38,7 +39,7 @@ func (r *Repository) Upsert(ctx context.Context, p Position) error {
 			updated_at           = NOW()`
 	_, err := r.db.Exec(ctx, q,
 		p.OurOrderID, p.Provider, p.ProviderPositionID, p.ProviderAcctID, p.SymbolID, p.Side, p.Volume,
-		p.OpenPrice, p.CurrentSL, p.CurrentTP, p.Swap, p.Commission, p.UsedMargin,
+		p.Tier, p.OpenPrice, p.CurrentSL, p.CurrentTP, p.Swap, p.Commission, p.UsedMargin,
 		p.Status, p.TrailingStopLoss, p.GuaranteedStopLoss, p.Label, p.Comment,
 		p.OpenTimestamp, p.CloseTimestamp, p.RawPayload,
 	)
@@ -68,7 +69,7 @@ func (r *Repository) Close(ctx context.Context, provider, providerPositionID str
 func (r *Repository) OpenByProvider(ctx context.Context, provider string) ([]Position, error) {
 	const q = `
 		SELECT id, provider, provider_position_id, provider_acct_id, symbol_id, side, volume,
-		       open_price, current_sl, current_tp, swap, commission, used_margin,
+		       tier, open_price, current_sl, current_tp, swap, commission, used_margin,
 		       status, trailing_stop_loss, guaranteed_stop_loss, label, comment,
 		       open_timestamp, close_timestamp, created_at, updated_at
 		FROM positions
@@ -84,7 +85,7 @@ func (r *Repository) OpenByProvider(ctx context.Context, provider string) ([]Pos
 		var p Position
 		if err := rows.Scan(
 			&p.ID, &p.Provider, &p.ProviderPositionID, &p.ProviderAcctID, &p.SymbolID,
-			&p.Side, &p.Volume, &p.OpenPrice, &p.CurrentSL, &p.CurrentTP,
+			&p.Side, &p.Volume, &p.Tier, &p.OpenPrice, &p.CurrentSL, &p.CurrentTP,
 			&p.Swap, &p.Commission, &p.UsedMargin,
 			&p.Status, &p.TrailingStopLoss, &p.GuaranteedStopLoss,
 			&p.Label, &p.Comment, &p.OpenTimestamp, &p.CloseTimestamp,

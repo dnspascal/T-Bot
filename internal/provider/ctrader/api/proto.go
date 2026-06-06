@@ -1,19 +1,10 @@
 package api
 
-// Manual protobuf encoding for cTrader Open API messages.
-// We encode only the specific messages the bot needs — no generated code required.
-//
-// Protobuf wire format:
-//   field tag  = (field_number << 3) | wire_type
-//   wire types: 0=varint, 2=length-delimited (string/bytes/embedded msg)
-
 import (
 	"encoding/binary"
 	"math"
 	"time"
 )
-
-// --- wire encoding helpers ---
 
 func appendVarint(b []byte, v uint64) []byte {
 	for v >= 0x80 {
@@ -117,24 +108,23 @@ func encodeNewOrderReq(accountID, symbolID int64, side uint32, volume int64, sl,
 	return b
 }
 
-func appendDouble(b []byte, field int, v float64) []byte {
-	b = appendTag(b, field, 1) // wire type 1 = 64-bit
-	var buf [8]byte
-	bits := math.Float64bits(v)
-	binary.LittleEndian.PutUint64(buf[:], bits)
-	return append(b, buf[:]...)
-}
 
 // --- Decoder helpers ---
 
 // --- Result types ---
 
 // TraderInfo holds the fields we extract from ProtoOATraderRes.
+// depositCurrency is not decoded here — the proto exposes it as depositAssetId (int64),
+// which requires a separate ProtoOAAssetListReq lookup to resolve to a name like "USD".
 type TraderInfo struct {
-	AccountID  int64
-	Balance    float64 // real value in deposit currency
-	Leverage   float64 // e.g. 100.0 = 100x leverage
-	BrokerName string
+	AccountID     int64
+	Balance       float64 // real value in deposit currency
+	Leverage      float64 // e.g. 400.0 = 1:400 leverage
+	MaxLeverage   float64 // max allowed leverage for the account
+	AccountMode   string  // "hedged" | "netted" | "linked"
+	BrokerName    string
+	IsLimitedRisk bool // guaranteed stop-loss / limited risk account
+	FairStopOut   bool // proportional margin stop-out vs FIFO
 }
 
 // OpenPosition is a simplified position extracted from ProtoOAReconcileRes.
@@ -190,18 +180,20 @@ func encodeGetTrendbarsReq(accountID, symbolID int64, period uint32, toMs int64,
 
 // Trendbar is a completed OHLC candle from cTrader.
 type Trendbar struct {
-	OpenTime  int64   // Unix seconds (utcTimestampInMinutes * 60)
-	Period    uint32  // 5=M5, 9=H1, 10=H4, 11=D1, etc.
-	Open      float64
-	High      float64
-	Low       float64
-	Close     float64
-	Volume    int64
+	OpenTime int64  // Unix seconds (utcTimestampInMinutes * 60)
+	Period   uint32 // 5=M5, 9=H1, 10=H4, 11=D1, etc.
+	Open     float64
+	High     float64
+	Low      float64
+	Close    float64
+	Volume   int64
 }
 
 // decodeTrendbar parses a single ProtoOATrendbar message.
 // Actual proto field numbers (from OpenApiModelMessages.proto):
-//   3=volume, 4=period, 5=low, 6=deltaOpen, 7=deltaClose, 8=deltaHigh, 9=utcTimestampInMinutes
+//
+//	3=volume, 4=period, 5=low, 6=deltaOpen, 7=deltaClose, 8=deltaHigh, 9=utcTimestampInMinutes
+//
 // Delta encoding: low is absolute; open = low+deltaOpen, close = low+deltaClose, high = low+deltaHigh.
 // All price values are in 1/100000 units (divide by 100000.0).
 func decodeTrendbar(data []byte) (Trendbar, bool) {
@@ -263,7 +255,7 @@ func decodeTrendbar(data []byte) (Trendbar, bool) {
 	lowF := float64(low) / divisor
 	return Trendbar{
 		OpenTime: int64(tsMinutes) * 60,
-		Period:   uint32(period),  // 5=M5, 9=H1, 10=H4, 11=D1
+		Period:   uint32(period), // 5=M5, 9=H1, 10=H4, 11=D1
 		Open:     lowF + float64(deltaOpen)/divisor,
 		High:     lowF + float64(deltaHigh)/divisor,
 		Low:      lowF,
@@ -272,74 +264,6 @@ func decodeTrendbar(data []byte) (Trendbar, bool) {
 	}, true
 }
 
-// decodeTrendbarForPeriod parses a ProtoOATrendbar and returns it only if
-// it matches wantPeriod (field 4 of the trendbar message is the period enum).
-func decodeTrendbarForPeriod(data []byte, wantPeriod uint32) (Trendbar, bool) {
-	const divisor = 100000.0
-	var (
-		low        uint64
-		deltaOpen  uint64
-		deltaHigh  uint64
-		deltaClose uint64
-		volume     uint64
-		tsMinutes  uint64
-		period     uint64
-	)
-	i := 0
-	for i < len(data) {
-		tag, n := decodeVarint(data[i:])
-		if n == 0 {
-			break
-		}
-		i += n
-		field := tag >> 3
-		wire := tag & 0x7
-		switch {
-		case field == 3 && wire == 0:
-			v, n2 := decodeVarint(data[i:])
-			i += n2
-			volume = v
-		case field == 4 && wire == 0:
-			v, n2 := decodeVarint(data[i:])
-			i += n2
-			period = v
-		case field == 5 && wire == 0:
-			v, n2 := decodeVarint(data[i:])
-			i += n2
-			low = v
-		case field == 6 && wire == 0:
-			v, n2 := decodeVarint(data[i:])
-			i += n2
-			deltaOpen = v
-		case field == 7 && wire == 0:
-			v, n2 := decodeVarint(data[i:])
-			i += n2
-			deltaClose = v
-		case field == 8 && wire == 0:
-			v, n2 := decodeVarint(data[i:])
-			i += n2
-			deltaHigh = v
-		case field == 9 && wire == 0:
-			v, n2 := decodeVarint(data[i:])
-			i += n2
-			tsMinutes = v
-		default:
-			i = skipField(data, i, wire)
-		}
-	}
-	if uint32(period) != wantPeriod || low == 0 && tsMinutes == 0 {
-		return Trendbar{}, false
-	}
-	lowF := float64(low) / divisor
-	return Trendbar{
-		OpenTime: int64(tsMinutes) * 60,
-		Open:     lowF + float64(deltaOpen)/divisor,
-		High:     lowF + float64(deltaHigh)/divisor,
-		Low:      lowF,
-		Close:    lowF + float64(deltaClose)/divisor,
-		Volume:   int64(volume),
-	}, true
-}
 
 // decodeGetTrendbarsRes extracts the list of historical trendbars from a ProtoOAGetTrendbarsRes.
 // Field 5 is repeated ProtoOATrendbar (from actual OpenApiMessages.proto).
@@ -398,17 +322,16 @@ func decodeLiveTrendbarEvents(data []byte) []Trendbar {
 // --- Decoders for new response types ---
 
 // decodeTraderRes extracts account info from a ProtoOATraderRes payload.
-// The balance field uses sint64 (zigzag) encoding; moneyDigits converts to real currency.
+// ProtoOATraderRes: field2=ctidTraderAccountId(int64), field3=ProtoOATrader(message).
 func decodeTraderRes(data []byte) (TraderInfo, bool) {
-	// field 2 in ProtoOATraderRes is the embedded ProtoOATrader message
-	traderBytes := extractLenField(data, 2)
+	traderBytes := extractLenField(data, 3)
 	if traderBytes == nil {
 		return TraderInfo{}, false
 	}
 
 	var info TraderInfo
 	var rawBalance int64
-	var moneyDigits uint64 = 2 // default — most brokers use cents
+	var moneyDigits uint64 = 2 // default per spec; overridden by field 20 if present
 
 	i := 0
 	for i < len(traderBytes) {
@@ -420,27 +343,50 @@ func decodeTraderRes(data []byte) (TraderInfo, bool) {
 		field := tag >> 3
 		wire := tag & 0x7
 		switch {
-		case field == 1 && wire == 0: // ctidTraderAccountId (sint64 zigzag)
+		case field == 1 && wire == 0: // ctidTraderAccountId (int64)
 			v, n2 := decodeVarint(traderBytes[i:])
 			i += n2
-			info.AccountID = decodeZigzag64(v)
-		case field == 3 && wire == 0: // balance (sint64 zigzag)
+			info.AccountID = int64(v)
+		case field == 2 && wire == 0: // balance (int64)
 			v, n2 := decodeVarint(traderBytes[i:])
 			i += n2
-			rawBalance = decodeZigzag64(v)
-		case field == 11 && wire == 0: // leverageInCents (uint32)
+			rawBalance = int64(v)
+		case field == 10 && wire == 0: // leverageInCents (uint32); 1:400 = 40000
 			v, n2 := decodeVarint(traderBytes[i:])
 			i += n2
 			info.Leverage = float64(v) / 100.0
-		case field == 24 && wire == 2: // brokerName (string)
+		case field == 12 && wire == 0: // maxLeverage (uint32)
+			v, n2 := decodeVarint(traderBytes[i:])
+			i += n2
+			info.MaxLeverage = float64(v)
+		case field == 15 && wire == 0: // accountType enum (0=HEDGED, 1=NETTED, 2=LINKED)
+			v, n2 := decodeVarint(traderBytes[i:])
+			i += n2
+			switch v {
+			case 1:
+				info.AccountMode = "netted"
+			case 2:
+				info.AccountMode = "linked"
+			default:
+				info.AccountMode = "hedged"
+			}
+		case field == 16 && wire == 2: // brokerName (string)
 			l, n2 := decodeVarint(traderBytes[i:])
 			i += n2
 			info.BrokerName = string(traderBytes[i : i+int(l)])
 			i += int(l)
-		case field == 35 && wire == 0: // moneyDigits (uint32)
+		case field == 18 && wire == 0: // isLimitedRisk (bool)
+			v, n2 := decodeVarint(traderBytes[i:])
+			i += n2
+			info.IsLimitedRisk = v != 0
+		case field == 20 && wire == 0: // moneyDigits (uint32)
 			v, n2 := decodeVarint(traderBytes[i:])
 			i += n2
 			moneyDigits = v
+		case field == 21 && wire == 0: // fairStopOut (bool)
+			v, n2 := decodeVarint(traderBytes[i:])
+			i += n2
+			info.FairStopOut = v != 0
 		default:
 			i = skipField(traderBytes, i, wire)
 		}
@@ -448,7 +394,7 @@ func decodeTraderRes(data []byte) (TraderInfo, bool) {
 
 	// Reject responses where nothing meaningful decoded — the server sent an
 	// empty or non-trader payload (e.g. only a clientMsgId echo).
-	if rawBalance == 0 && info.AccountID == 0 && info.Leverage == 0 {
+	if rawBalance == 0 && info.AccountID == 0 {
 		return TraderInfo{}, false
 	}
 	info.Balance = float64(rawBalance) / math.Pow(10, float64(moneyDigits))
@@ -467,7 +413,7 @@ func decodeReconcileRes(data []byte) []OpenPosition {
 		i += n
 		field := tag >> 3
 		wire := tag & 0x7
-		if field == 2 && wire == 2 { // repeated ProtoOAPosition
+		if field == 3 && wire == 2 { // repeated ProtoOAPosition (field2=ctidTraderAccountId, field3=position)
 			l, n2 := decodeVarint(data[i:])
 			i += n2
 			pos := decodeOAPosition(data[i : i+int(l)])
@@ -492,10 +438,10 @@ func decodeOAPosition(data []byte) OpenPosition {
 		field := tag >> 3
 		wire := tag & 0x7
 		switch {
-		case field == 1 && wire == 0: // positionId (sint64 zigzag)
+		case field == 1 && wire == 0: // positionId (int64)
 			v, n2 := decodeVarint(data[i:])
 			i += n2
-			pos.PositionID = decodeZigzag64(v)
+			pos.PositionID = int64(v)
 		case field == 2 && wire == 2: // tradeData (embedded ProtoOATradeData)
 			l, n2 := decodeVarint(data[i:])
 			i += n2
@@ -519,14 +465,14 @@ func decodeTradeData(data []byte, pos OpenPosition) OpenPosition {
 		field := tag >> 3
 		wire := tag & 0x7
 		switch {
-		case field == 1 && wire == 0: // symbolId (sint64 zigzag)
+		case field == 1 && wire == 0: // symbolId (int64)
 			v, n2 := decodeVarint(data[i:])
 			i += n2
-			pos.SymbolID = decodeZigzag64(v)
-		case field == 2 && wire == 0: // volume (sint64 zigzag)
+			pos.SymbolID = int64(v)
+		case field == 2 && wire == 0: // volume (int64)
 			v, n2 := decodeVarint(data[i:])
 			i += n2
-			pos.Volume = decodeZigzag64(v)
+			pos.Volume = int64(v)
 		case field == 3 && wire == 0: // tradeSide (enum: 1=BUY 2=SELL)
 			v, n2 := decodeVarint(data[i:])
 			i += n2
@@ -656,17 +602,23 @@ func execTypeString(v uint64) string {
 	case 3:
 		return "ORDER_FILLED"
 	case 4:
-		return "ORDER_REJECTED"
+		return "ORDER_REPLACED"
 	case 5:
 		return "ORDER_CANCELLED"
 	case 6:
 		return "ORDER_EXPIRED"
+	case 7:
+		return "ORDER_REJECTED"
+	case 8:
+		return "ORDER_CANCEL_REJECTED"
 	case 9:
 		return "SWAP"
 	case 10:
 		return "DEPOSIT_WITHDRAW"
 	case 11:
 		return "ORDER_PARTIAL_FILL"
+	case 12:
+		return "BONUS_DEPOSIT_WITHDRAW"
 	default:
 		return "UNKNOWN"
 	}
@@ -734,10 +686,10 @@ func decodeDeal(data []byte) DealInfo {
 			v, n2 := decodeVarint(data[i:])
 			i += n2
 			d.DealStatus = uint32(v)
-		case field == 14 && wire == 0: // commission (sint64 zigzag)
+		case field == 14 && wire == 0: // commission (int64)
 			v, n2 := decodeVarint(data[i:])
 			i += n2
-			rawCommission = decodeZigzag64(v)
+			rawCommission = int64(v)
 		case field == 16 && wire == 2: // closePositionDetail
 			l, n2 := decodeVarint(data[i:])
 			i += n2
@@ -762,8 +714,10 @@ func decodeDeal(data []byte) DealInfo {
 }
 
 // decodeCloseDetail parses a ProtoOAClosePositionDetail message.
-// Fields: 1=entryPrice(double), 2=swap(sint64), 3=commission(sint64),
-// 4=balance(sint64), 5=grossProfit(sint64), 7=closedVolume(sint64), 9=pnlConversionFee(sint64).
+// Fields (from OpenApiModelMessages.proto):
+// 1=entryPrice(double), 2=grossProfit(int64), 3=swap(int64),
+// 4=commission(int64), 5=balance(int64), 7=closedVolume(int64),
+// 10=pnlConversionFee(int64). All int64 fields are regular varint (not zigzag).
 func decodeCloseDetail(data []byte, scale float64) CloseDetail {
 	var c CloseDetail
 	var rawSwap, rawCommission, rawBalance, rawGrossProfit, rawClosedVolume, rawPnLFee int64
@@ -784,30 +738,30 @@ func decodeCloseDetail(data []byte, scale float64) CloseDetail {
 				c.EntryPrice = math.Float64frombits(bits)
 			}
 			i += 8
-		case field == 2 && wire == 0:
+		case field == 2 && wire == 0: // grossProfit (int64)
 			v, n2 := decodeVarint(data[i:])
 			i += n2
-			rawSwap = decodeZigzag64(v)
-		case field == 3 && wire == 0:
+			rawGrossProfit = int64(v)
+		case field == 3 && wire == 0: // swap (int64)
 			v, n2 := decodeVarint(data[i:])
 			i += n2
-			rawCommission = decodeZigzag64(v)
-		case field == 4 && wire == 0:
+			rawSwap = int64(v)
+		case field == 4 && wire == 0: // commission (int64)
 			v, n2 := decodeVarint(data[i:])
 			i += n2
-			rawBalance = decodeZigzag64(v)
-		case field == 5 && wire == 0:
+			rawCommission = int64(v)
+		case field == 5 && wire == 0: // balance (int64)
 			v, n2 := decodeVarint(data[i:])
 			i += n2
-			rawGrossProfit = decodeZigzag64(v)
-		case field == 7 && wire == 0:
+			rawBalance = int64(v)
+		case field == 7 && wire == 0: // closedVolume (int64)
 			v, n2 := decodeVarint(data[i:])
 			i += n2
-			rawClosedVolume = decodeZigzag64(v)
-		case field == 9 && wire == 0:
+			rawClosedVolume = int64(v)
+		case field == 10 && wire == 0: // pnlConversionFee (int64)
 			v, n2 := decodeVarint(data[i:])
 			i += n2
-			rawPnLFee = decodeZigzag64(v)
+			rawPnLFee = int64(v)
 		default:
 			i = skipField(data, i, wire)
 		}
@@ -822,25 +776,6 @@ func decodeCloseDetail(data []byte, scale float64) CloseDetail {
 	return c
 }
 
-// decodeExecutionType reads only the executionType field (kept for callers that don't need deal data).
-func decodeExecutionType(data []byte) string {
-	i := 0
-	for i < len(data) {
-		tag, n := decodeVarint(data[i:])
-		if n == 0 {
-			break
-		}
-		i += n
-		field := tag >> 3
-		wire := tag & 0x7
-		if field == 3 && wire == 0 {
-			v, _ := decodeVarint(data[i:])
-			return execTypeString(v)
-		}
-		i = skipField(data, i, wire)
-	}
-	return "UNKNOWN"
-}
 
 // decodeOrderError decodes a ProtoOAOrderErrorEvent (2132) payload.
 // Fields: 2=errorCode(string), 3=orderId(int64), 7=description(string).
@@ -906,7 +841,7 @@ func decodeGenericError(data []byte) (code uint32, description string) {
 }
 
 // decodeOAError decodes a ProtoOAErrorRes (2142) payload.
-// Fields: 2=errorCode (string), 3=description (string).
+// Fields: 2=ctidTraderAccountId(int64), 3=errorCode(string), 4=description(string).
 func decodeOAError(data []byte) (code, description string) {
 	i := 0
 	for i < len(data) {
@@ -918,12 +853,12 @@ func decodeOAError(data []byte) (code, description string) {
 		field := tag >> 3
 		wire := tag & 0x7
 		switch {
-		case field == 2 && wire == 2:
+		case field == 3 && wire == 2: // errorCode (string)
 			l, n2 := decodeVarint(data[i:])
 			i += n2
 			code = string(data[i : i+int(l)])
 			i += int(l)
-		case field == 3 && wire == 2:
+		case field == 4 && wire == 2: // description (string)
 			l, n2 := decodeVarint(data[i:])
 			i += n2
 			description = string(data[i : i+int(l)])
@@ -949,21 +884,22 @@ func decodeSpotEvent(data []byte) (bid, ask uint64, ok bool) {
 		i += n
 		field := tag >> 3
 		wire := tag & 0x7
-		switch {
-		case wire == 0: // varint
+		switch  wire{
+		case 0: // varint
 			val, n2 := decodeVarint(data[i:])
 			i += n2
-			if field == 4 {
+			switch field {
+			case 4:
 				bid = val
-			} else if field == 5 {
+			case 5:
 				ask = val
 			}
-		case wire == 2: // length-delimited
+		case 2: // length-delimited
 			l, n2 := decodeVarint(data[i:])
 			i += n2 + int(l)
-		case wire == 1: // 64-bit
+		case 1: // 64-bit
 			i += 8
-		case wire == 5: // 32-bit
+		case 5: // 32-bit
 			i += 4
 		default:
 			return 0, 0, false

@@ -121,14 +121,22 @@ func (c *CTrader) Auth(ctx context.Context) (*provider.AuthResult, error) {
 
 	balance := traderInfo.Balance
 	leverage := traderInfo.Leverage
+	maxLeverage := traderInfo.MaxLeverage
+	accountMode := traderInfo.AccountMode
 	brokerName := traderInfo.BrokerName
+	isLimitedRisk := traderInfo.IsLimitedRisk
+	fairStopOut := traderInfo.FairStopOut
 	trigger := "startup"
 	c.snaps.Insert(ctx, snapshot.Snapshot{
 		Provider:       "ctrader",
 		ProviderAcctID: fmt.Sprintf("%d", c.ctCfg.AccountID),
 		Balance:        balance,
 		LeverageRatio:  &leverage,
+		MaxLeverage:    &maxLeverage,
+		AccountMode:    &accountMode,
 		BrokerName:     &brokerName,
+		IsLimitedRisk:  &isLimitedRisk,
+		FairStopOut:    &fairStopOut,
 		Trigger:        &trigger,
 		SnapshottedAt:  time.Now(),
 	})

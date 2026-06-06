@@ -15,21 +15,21 @@ func NewATR(period int) *ATR {
 	return &ATR{period: period}
 }
 
-// Add feeds one OHLC candle and returns the current ATR.
-// Returns 0 until enough candles have been seen to seed the initial SMA.
 func (a *ATR) Add(high, low, close float64) float64 {
 	a.count++
+
 	if a.count == 1 {
 		a.prevClose = close
+		a.sum = high - low // Wilder: first candle TR = high - low (no prior close)
 		return 0
 	}
 
-	tr := math.Max(math.Max(high-low, math.Abs(high-a.prevClose)), math.Abs(low-a.prevClose))
+	tr := math.Max(high-low, math.Max(math.Abs(high-a.prevClose), math.Abs(low-a.prevClose)))
 	a.prevClose = close
 
 	if !a.initialized {
 		a.sum += tr
-		if a.count == a.period+1 {
+		if a.count == a.period {
 			a.value = a.sum / float64(a.period)
 			a.initialized = true
 		}

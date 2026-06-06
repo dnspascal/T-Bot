@@ -1,38 +1,36 @@
 package indicator
 
 func CalculateRegime(emaFast, emaSlow, adx, high, low float64, ohlc []OHLC) string {
-	if adx < 25 {
-		return "ranging" // Weak trend
-	}
-
-	if emaFast > emaSlow && adx >= 25 {
-		return "trending_up"
-	}
-	if emaFast < emaSlow && adx >= 25 {
-		return "trending_down"
-	}
-
 	if len(ohlc) > 20 {
-		recentHigh := ohlc[len(ohlc)-20].High
-		recentLow := ohlc[len(ohlc)-20].Low
-		for i := len(ohlc) - 19; i < len(ohlc); i++ {
-			if ohlc[i].High > recentHigh {
-				recentHigh = ohlc[i].High
+		prior := ohlc[:len(ohlc)-1]
+		start := max(len(prior)-20, 0)
+		refHigh := prior[start].High
+		refLow := prior[start].Low
+		for _, c := range prior[start+1:] {
+			if c.High > refHigh {
+				refHigh = c.High
 			}
-			if ohlc[i].Low < recentLow {
-				recentLow = ohlc[i].Low
+			if c.Low < refLow {
+				refLow = c.Low
 			}
 		}
-		if high > recentHigh || low < recentLow {
+		if high > refHigh || low < refLow {
 			return "breakout"
 		}
 	}
 
+	if adx < 25 {
+		return "ranging"
+	}
+	if emaFast > emaSlow {
+		return "trending_up"
+	}
+	if emaFast < emaSlow {
+		return "trending_down"
+	}
 	return "ranging"
 }
 
-// CalculateVolatilityTrend determines if volatility is expanding, contracting, or stable.
-// prevATR is the ATR value from the previous candle.
 func CalculateVolatilityTrend(currentATR, prevATR float64) string {
 	if prevATR == 0 {
 		return "stable"
@@ -47,22 +45,29 @@ func CalculateVolatilityTrend(currentATR, prevATR float64) string {
 	return "stable"
 }
 
-// CalculateMomentumDirection determines if momentum is rising, falling, or stable
+// CalculateMomentumDirection determines if momentum is rising, falling, or stable.
+// Both RSI and the 3-bar price slope must agree to avoid false signals.
 func CalculateMomentumDirection(rsi float64, closes []float64) string {
-	if len(closes) < 2 {
+	if len(closes) < 4 {
 		return "stable"
 	}
 
-	if rsi > 60 {
+	// 3-bar slope: compare the last close to the close 3 bars ago.
+	recent := closes[len(closes)-1]
+	prior := closes[len(closes)-4]
+	priceRising := recent > prior
+	priceFalling := recent < prior
+
+	switch {
+	case rsi > 60 && priceRising:
 		return "rising"
-	}
-	if rsi < 40 {
+	case rsi < 40 && priceFalling:
 		return "falling"
+	default:
+		return "stable"
 	}
-	return "stable"
 }
 
-// CalculateVolumeMA calculates the simple moving average of volume over the last period candles.
 func CalculateVolumeMA(volumes []int64, period int) int64 {
 	if len(volumes) == 0 {
 		return 0
