@@ -64,6 +64,10 @@ func (c *CTrader) Auth(ctx context.Context) (*provider.AuthResult, error) {
 		c.ctCfg.AccessToken = token
 		slog.Info("loaded cTrader access token from DB")
 	}
+	if token, err := bot.LoadCredential(ctx, c.db, "ctrader_refresh_token"); err == nil && token != "" {
+		c.ctCfg.RefreshToken = token
+		slog.Info("loaded cTrader refresh token from DB")
+	}
 
 	// Authenticate app
 	authStart := time.Now()
@@ -339,11 +343,18 @@ func (c *CTrader) FetchLatestTick(ctx context.Context, symbol string) (*provider
 // === CREDENTIALS & REFRESH ===
 
 func (c *CTrader) RefreshCredentials(ctx context.Context) error {
-	newAccessToken, _, err := api.RefreshToken(c.ctCfg.ClientID, c.ctCfg.ClientSecret, c.ctCfg.RefreshToken)
+	newAccessToken, newRefreshToken, err := api.RefreshToken(c.ctCfg.ClientID, c.ctCfg.ClientSecret, c.ctCfg.RefreshToken)
 	if err != nil {
 		return err
 	}
 	c.ctCfg.AccessToken = newAccessToken
+	c.ctCfg.RefreshToken = newRefreshToken
+	if err := bot.SaveCredential(ctx, c.db, "ctrader_access_token", newAccessToken); err != nil {
+		slog.Warn("failed to persist cTrader access token", "err", err)
+	}
+	if err := bot.SaveCredential(ctx, c.db, "ctrader_refresh_token", newRefreshToken); err != nil {
+		slog.Warn("failed to persist cTrader refresh token", "err", err)
+	}
 	slog.Info("cTrader credentials refreshed")
 	return nil
 }
