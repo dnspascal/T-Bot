@@ -51,7 +51,10 @@ func (r *Repository) Today(ctx context.Context, symbolID string) (float64, error
 	const q = `SELECT COALESCE(realized_pnl, 0) FROM daily_pnl WHERE date = CURRENT_DATE AND symbol_id = $1`
 	var v float64
 	if err := r.db.QueryRow(ctx, q, symbolID).Scan(&v); err != nil {
-		return 0, nil
+		if err.Error() == "no rows in result set" {
+			return 0, nil // no trades yet today
+		}
+		return 0, fmt.Errorf("pnl.Today: %w", err)
 	}
 	return v, nil
 }

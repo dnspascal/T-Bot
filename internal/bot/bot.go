@@ -82,7 +82,6 @@ func New(
 	db *pgxpool.Pool,
 	riskMgr *risk.Manager,
 	balance float64,
-	_ bool, // hasOpenPosition — now derived from registry
 	lookup *symbol.SymbolLookup,
 	ticks *tick.Repository,
 	candles *candle.Repository,
@@ -759,6 +758,11 @@ func (b *Bot) Reset() {
 	b.pendingCloseReasons = make(map[string]string)
 	b.lastCandleOpenTime = 0
 	b.lastCandleClose = 0
+	b.pendingSide = ""
+	b.pendingTier = 0
+	b.pendingSLPrice = 0
+	b.pendingTPPrice = 0
+	b.pendingATR = 0
 }
 
 func (b *Bot) refreshBalance() {

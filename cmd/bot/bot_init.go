@@ -13,16 +13,14 @@ import (
 )
 
 type BotInitResult struct {
-	Bot            *bot.Bot
-	RiskManager    *risk.Manager
-	ProcessorMgr   *marketstate.ProcessorManager
-	Balance        float64
-	HasOpenPosition bool
+	Bot          *bot.Bot
+	RiskManager  *risk.Manager
+	ProcessorMgr *marketstate.ProcessorManager
+	Balance      float64
 }
 
 func initializeBot(ctx context.Context, cfg *config.Config, svc *Services, prov provider.Provider, symbol string, symbolUUID string, authResult *provider.AuthResult) *BotInitResult {
 	balance := authResult.Balance
-	hasOpenPosition := authResult.HasOpenPosition
 
 	todayLoss, err := svc.Repos.PnLs.Today(ctx, symbolUUID)
 	if err != nil {
@@ -58,13 +56,12 @@ func initializeBot(ctx context.Context, cfg *config.Config, svc *Services, prov 
 	}
 	slog.Info("market state processors initialized", "timeframes", len(config.TradingPeriods), "symbol", symbol)
 
-	tradingBot := bot.New(cfg, prov, symbol, symbolUUID, authResult.AccountID, svc.DB.Pool, riskMgr, balance, hasOpenPosition, svc.Lookup, svc.Repos.Ticks, svc.Repos.Candles, svc.Repos.Signals, svc.Repos.Orders, svc.Repos.Fills, svc.Repos.Positions, svc.Repos.PnLs, svc.Repos.Events, processorMgr)
+	tradingBot := bot.New(cfg, prov, symbol, symbolUUID, authResult.AccountID, svc.DB.Pool, riskMgr, balance, svc.Lookup, svc.Repos.Ticks, svc.Repos.Candles, svc.Repos.Signals, svc.Repos.Orders, svc.Repos.Fills, svc.Repos.Positions, svc.Repos.PnLs, svc.Repos.Events, processorMgr)
 
 	return &BotInitResult{
-		Bot:             tradingBot,
-		RiskManager:     riskMgr,
-		ProcessorMgr:    processorMgr,
-		Balance:         balance,
-		HasOpenPosition: hasOpenPosition,
+		Bot:          tradingBot,
+		RiskManager:  riskMgr,
+		ProcessorMgr: processorMgr,
+		Balance:      balance,
 	}
 }

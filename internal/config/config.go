@@ -45,10 +45,6 @@ type Config struct {
 	MaxDailyLossPct float64 // percent of balance, e.g. 2.0 = 2%
 	InitialBalance float64 // fallback balance if FetchAccountInfo fails
 
-	// Strategy settings
-	StopLossPips   float64
-	TakeProfitPips float64
-
 	Period string
 
 	
@@ -110,16 +106,6 @@ func Load() (*Config, error) {
 		return nil, fmt.Errorf("MAX_DAILY_LOSS_PCT must be a number: %w", err)
 	}
 
-	stopLossPips, err := strconv.ParseFloat(getEnv("STOP_LOSS_PIPS", "10.0"), 64)
-	if err != nil {
-		return nil, fmt.Errorf("STOP_LOSS_PIPS must be a number: %w", err)
-	}
-
-	takeProfitPips, err := strconv.ParseFloat(getEnv("TAKE_PROFIT_PIPS", "20.0"), 64)
-	if err != nil {
-		return nil, fmt.Errorf("TAKE_PROFIT_PIPS must be a number: %w", err)
-	}
-
 	cfg := &Config{
 		DatabaseURL:    mustEnv("DATABASE_URL"),
 		CTrader:        ctraderCfg,
@@ -127,8 +113,6 @@ func Load() (*Config, error) {
 		InitialBalance: initialBalance,
 		RiskPercent:    riskPercent,
 		MaxDailyLossPct: maxDailyLossPct,
-		StopLossPips:   stopLossPips,
-		TakeProfitPips: takeProfitPips,
 
 		// Multi-provider configuration
 		EnableCTrader: getEnv("ENABLE_CTRADER", "true") == "true",
