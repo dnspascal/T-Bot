@@ -82,11 +82,18 @@ func Load() (*Config, error) {
 
 	// Load Binance configuration (optional)
 	var binanceCfg *BinanceConfig
-	if os.Getenv("BINANCE_API_KEY") != "" {
+	if os.Getenv("BINANCE_API_KEY") != "" || os.Getenv("BINANCE_TESTNET_API_KEY") != "" {
+		isTestNet := getEnv("BINANCE_TESTNET", "true") == "true"
+		apiKey := getEnv("BINANCE_API_KEY", "")
+		apiSecret := getEnv("BINANCE_API_SECRET", "")
+		if isTestNet && os.Getenv("BINANCE_TESTNET_API_KEY") != "" {
+			apiKey = getEnv("BINANCE_TESTNET_API_KEY", "")
+			apiSecret = getEnv("BINANCE_TESTNET_API_SECRET", "")
+		}
 		binanceCfg = &BinanceConfig{
-			APIKey:  getEnv("BINANCE_API_KEY", ""),
-			APISecret: getEnv("BINANCE_API_SECRET", ""),
-			TestNet: getEnv("BINANCE_TESTNET", "true") == "true",
+			APIKey:    apiKey,
+			APISecret: apiSecret,
+			TestNet:   isTestNet,
 		}
 	}
 
