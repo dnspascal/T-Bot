@@ -114,13 +114,11 @@ func (c *CTrader) Auth(ctx context.Context) (*provider.AuthResult, error) {
 
 	fetchStart := time.Now()
 	traderInfo, err := c.client.FetchAccountInfo()
-	if err != nil || traderInfo.Balance == 0 {
-		if err != nil {
-			slog.Warn("FetchAccountInfo failed, using configured initial balance", "err", err, "balance", c.cfg.InitialBalance)
-		} else {
-			slog.Warn("FetchAccountInfo returned empty balance (demo server limitation), using configured initial balance", "balance", c.cfg.InitialBalance)
-		}
-		traderInfo = api.TraderInfo{Balance: c.cfg.InitialBalance}
+	if err != nil {
+		return nil, fmt.Errorf("fetch account info: %w", err)
+	}
+	if traderInfo.Balance == 0 {
+		return nil, fmt.Errorf("account balance is 0 — check your account or API credentials")
 	}
 
 	balance := traderInfo.Balance

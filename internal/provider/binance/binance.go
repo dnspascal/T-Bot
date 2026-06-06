@@ -47,7 +47,6 @@ type SnapshotsRepo interface {
 }
 
 func New(cfg *config.Config, db *pgxpool.Pool, events EventsRepo, snaps SnapshotsRepo) *Binance {
-	slog.Info("binance provider created")
 	return &Binance{
 		cfg:            cfg,
 		db:             db,
@@ -62,7 +61,6 @@ func New(cfg *config.Config, db *pgxpool.Pool, events EventsRepo, snaps Snapshot
 }
 
 func (b *Binance) Connect() error {
-	slog.Info("binance provider connecting")
 	if b.cfg.Binance == nil || b.cfg.Binance.APIKey == "" {
 		return fmt.Errorf("Binance API key not configured")
 	}
@@ -84,7 +82,6 @@ func (b *Binance) StartStreaming() error {
 	}
 	go b.forwardPriceEvents()
 	go b.forwardKlineEvents()
-	slog.Info("binance streaming started")
 	return nil
 }
 
@@ -125,8 +122,9 @@ func (b *Binance) Auth(ctx context.Context) (*provider.AuthResult, error) {
 	}
 
 	if balance == 0 {
-		balance = b.cfg.InitialBalance
+		return nil, fmt.Errorf("USDT balance is 0 — check API key permissions or fund your account")
 	}
+	slog.Info("USDT balance loaded from API", "balance", balance)
 
 	openOrders, err := b.restClient.GetOpenOrders("")
 	hasOpenPosition := len(openOrders) > 0
@@ -440,7 +438,6 @@ func (b *Binance) forwardPriceEvents() {
 			Timestamp:    price.Timestamp,
 		}:
 		default:
-			slog.Warn("binance price channel full, dropping message")
 		}
 	}
 }

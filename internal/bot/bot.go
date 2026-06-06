@@ -56,7 +56,8 @@ type Bot struct {
 
 	pendingCloseReasons map[string]string
 
-	tickCh chan tick.Tick // bounded channel for async tick persistence
+	tickCh      chan tick.Tick // bounded channel for async tick persistence
+	lastTickSaved time.Time    // throttle: persist at most once per second
 
 	db        *pgxpool.Pool
 	lookup    *symbol.SymbolLookup
@@ -721,6 +722,10 @@ func (b *Bot) storeCandle(ctx context.Context, c provider.Candle) {
 
 func (b *Bot) onTick(_ context.Context, price provider.PriceEvent) {
 	b.currentPrice = price
+	if time.Since(b.lastTickSaved) < time.Second {
+		return
+	}
+	b.lastTickSaved = time.Now()
 	t := tick.Tick{
 		SymbolID:     b.symbolUUID,
 		Bid:          price.Bid,
@@ -731,7 +736,6 @@ func (b *Bot) onTick(_ context.Context, price provider.PriceEvent) {
 	select {
 	case b.tickCh <- t:
 	default:
-		slog.Warn("tick channel full — dropping tick")
 	}
 }
 

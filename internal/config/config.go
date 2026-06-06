@@ -8,7 +8,6 @@ import (
 	"github.com/joho/godotenv"
 )
 
-// CTraderConfig holds cTrader-specific credentials
 type CTraderConfig struct {
 	ClientID     string
 	ClientSecret string
@@ -19,31 +18,25 @@ type CTraderConfig struct {
 	Demo         bool
 }
 
-// BinanceConfig holds Binance-specific credentials
 type BinanceConfig struct {
 	APIKey    string
 	APISecret string
 	TestNet   bool
 }
 
-// Config holds all configuration for the trading bot
 type Config struct {
 	DatabaseURL string
 
-	// Per-provider configurations
 	CTrader *CTraderConfig
 	Binance *BinanceConfig
 
-	// Provider-specific symbols (for multi-provider mode)
 	EnableCTrader  bool
 	CTraderSymbol  string
 	EnableBinance  bool
 	BinanceSymbol  string
 
-	// Risk settings
-	RiskPercent    float64
-	MaxDailyLossPct float64 // percent of balance, e.g. 2.0 = 2%
-	InitialBalance float64 // fallback balance if FetchAccountInfo fails
+	RiskPercent     float64
+	MaxDailyLossPct float64
 
 	Period string
 
@@ -56,7 +49,6 @@ type Config struct {
 func Load() (*Config, error) {
 	godotenv.Load()
 
-	// Load cTrader configuration (optional, only if enabled)
 	var ctraderCfg *CTraderConfig
 	if getEnv("ENABLE_CTRADER", "true") == "true" {
 		accountID, err := strconv.ParseInt(mustEnv("CTRADER_ACCOUNT_ID"), 10, 64)
@@ -80,7 +72,6 @@ func Load() (*Config, error) {
 		}
 	}
 
-	// Load Binance configuration (optional)
 	var binanceCfg *BinanceConfig
 	if os.Getenv("BINANCE_API_KEY") != "" || os.Getenv("BINANCE_TESTNET_API_KEY") != "" {
 		isTestNet := getEnv("BINANCE_TESTNET", "true") == "true"
@@ -97,12 +88,6 @@ func Load() (*Config, error) {
 		}
 	}
 
-	// Load common settings
-	initialBalance, err := strconv.ParseFloat(getEnv("INITIAL_BALANCE", "200.0"), 64)
-	if err != nil {
-		return nil, fmt.Errorf("INITIAL_BALANCE must be a number: %w", err)
-	}
-
 	riskPercent, err := strconv.ParseFloat(getEnv("RISK_PERCENT", "1.0"), 64)
 	if err != nil {
 		return nil, fmt.Errorf("RISK_PERCENT must be a number: %w", err)
@@ -114,20 +99,17 @@ func Load() (*Config, error) {
 	}
 
 	cfg := &Config{
-		DatabaseURL:    mustEnv("DATABASE_URL"),
-		CTrader:        ctraderCfg,
-		Binance:        binanceCfg,
-		InitialBalance: initialBalance,
-		RiskPercent:    riskPercent,
+		DatabaseURL:     mustEnv("DATABASE_URL"),
+		CTrader:         ctraderCfg,
+		Binance:         binanceCfg,
+		RiskPercent:     riskPercent,
 		MaxDailyLossPct: maxDailyLossPct,
 
-		// Multi-provider configuration
 		EnableCTrader: getEnv("ENABLE_CTRADER", "true") == "true",
 		CTraderSymbol: getEnv("CTRADER_SYMBOL", "EURUSD"),
 		EnableBinance: getEnv("ENABLE_BINANCE", "false") == "true",
 		BinanceSymbol: getEnv("BINANCE_SYMBOL", "BTCUSDT"),
 
-		// Trading period
 		Period: getEnv("TRADING_PERIOD", "M5"),
 
 		DevMode:          getEnv("DEV_MODE", "false") == "true",

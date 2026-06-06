@@ -44,15 +44,6 @@ func (w *Warmer) warmupTimeframe(ctx context.Context, symbol, period string) err
 		return fmt.Errorf("no historical candles returned")
 	}
 
-	slog.Info("fetched candles",
-		"period", period,
-		"count", len(candles),
-		"firstClose", candles[0].Close,
-		"lastClose", candles[len(candles)-1].Close,
-		"firstTime", candles[0].OpenTime,
-		"lastTime", candles[len(candles)-1].OpenTime,
-	)
-
 	for _, c := range candles {
 		w.processorMgr.WarmCandle(period, c.OpenTime, c.Open, c.High, c.Low, c.Close, c.Volume)
 	}
@@ -61,15 +52,5 @@ func (w *Warmer) warmupTimeframe(ctx context.Context, symbol, period string) err
 		slog.Warn("failed to commit warm-up state", "period", period, "err", err)
 	}
 
-	states := w.processorMgr.GetAllStates()
-	if s, ok := states[period]; ok {
-		slog.Info("timeframe warmed up",
-			"period", period,
-			"candles", len(candles),
-			"isReady", s.IsWarmedUp,
-			"ema9", s.EMAFast,
-			"ema21", s.EMASlow,
-		)
-	}
 	return nil
 }

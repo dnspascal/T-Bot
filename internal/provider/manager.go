@@ -144,8 +144,6 @@ func (m *Manager) SetupAllProviders(ctx context.Context) error {
 		if res.err != nil {
 			errs = append(errs, fmt.Errorf("%s: %w", res.name, res.err))
 			slog.Error("provider setup failed", "name", res.name, "err", res.err)
-		} else {
-			slog.Info("provider setup complete", "name", res.name)
 		}
 	}
 

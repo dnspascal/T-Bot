@@ -54,8 +54,6 @@ func initializeBot(ctx context.Context, cfg *config.Config, svc *Services, prov 
 		proc := marketstate.NewProcessor(symbolUUID, prov.Name(), period, buf, svc.Repos.MarketState)
 		processorMgr.AddProcessor(period, proc)
 	}
-	slog.Info("market state processors initialized", "timeframes", len(config.TradingPeriods), "symbol", symbol)
-
 	tradingBot := bot.New(cfg, prov, symbol, symbolUUID, authResult.AccountID, svc.DB.Pool, riskMgr, balance, svc.Lookup, svc.Repos.Ticks, svc.Repos.Candles, svc.Repos.Signals, svc.Repos.Orders, svc.Repos.Fills, svc.Repos.Positions, svc.Repos.PnLs, svc.Repos.Events, processorMgr)
 
 	return &BotInitResult{

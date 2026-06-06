@@ -75,11 +75,11 @@ func main() {
 
 	authResults, err := provMgr.AuthAllProviders(ctx)
 	if err != nil {
-		slog.Warn("some providers failed auth", "err", err)
+		log.Fatal("provider auth failed: ", err)
 	}
 
 	if err := provMgr.SetupAllProviders(ctx); err != nil {
-		slog.Warn("some providers failed setup", "err", err)
+		log.Fatal("provider setup failed: ", err)
 	}
 
 
