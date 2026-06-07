@@ -15,10 +15,11 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
+
+
 const (
 	binanceBrokerName    = "Binance"
 	binanceAccountMode   = "netted"
-	binanceLeverage      = 1.0
 	binanceQuoteCurrency = "USDT"
 )
 
@@ -76,7 +77,7 @@ func (b *Binance) Connect() error {
 }
 
 func (b *Binance) StartStreaming() error {
-	b.wsClient = NewWebSocketClient(b.cfg.BinanceSymbol, b.cfg.Period, b.cfg.Binance.TestNet)
+	b.wsClient = NewWebSocketClient(b.cfg.BinanceSymbol, b.cfg.Binance.TestNet)
 	if err := b.wsClient.Connect(); err != nil {
 		return fmt.Errorf("websocket connect: %w", err)
 	}
@@ -130,9 +131,16 @@ func (b *Binance) Auth(ctx context.Context) (*provider.AuthResult, error) {
 	}
 	hasOpenPosition := len(openPositions) > 0
 
+	leverage, err := b.restClient.GetLeverage(b.cfg.BinanceSymbol)
+	if err != nil {
+		return nil, fmt.Errorf("get leverage: cannot trade without knowing leverage: %w", err)
+	}
+	slog.Info("leverage loaded from API", "symbol", b.cfg.BinanceSymbol, "leverage", leverage)
+
 	b.events.Insert(ctx, "auth_ok", map[string]any{
 		"balance":        balance,
 		"open_positions": len(openPositions),
+		"leverage":       leverage,
 	}, elapsed(authStart))
 
 	trigger := "startup"
@@ -141,7 +149,6 @@ func (b *Binance) Auth(ctx context.Context) (*provider.AuthResult, error) {
 	currency := binanceQuoteCurrency
 	brokerName := binanceBrokerName
 	accountMode := binanceAccountMode
-	leverage := binanceLeverage
 
 	b.snaps.Insert(ctx, snapshot.Snapshot{
 		Provider:        "binance",
@@ -160,7 +167,7 @@ func (b *Binance) Auth(ctx context.Context) (*provider.AuthResult, error) {
 		Balance:         balance,
 		HasOpenPosition: hasOpenPosition,
 		AccountID:       accountID,
-		Leverage:        binanceLeverage,
+		Leverage:        leverage,
 		BrokerName:      binanceBrokerName,
 	}, nil
 }
@@ -169,7 +176,6 @@ func (b *Binance) Setup() error {
 	return nil
 }
 
-// === ORDER PLACEMENT ===
 
 func (b *Binance) PlaceMarketOrder(
 	ctx context.Context,
@@ -182,7 +188,6 @@ func (b *Binance) PlaceMarketOrder(
 		return "", fmt.Errorf("not connected")
 	}
 
-	// Futures BTCUSDT LOT_SIZE step = 0.001 BTC (3 decimal places).
 	qty := math.Floor(float64(volume)/100_000_000*1000) / 1000
 
 	slog.Info("placing market order", "symbol", b.cfg.BinanceSymbol, "side", side, "qty", qty)
@@ -225,7 +230,6 @@ func (b *Binance) CancelOrder(ctx context.Context, orderID string) error {
 	return fmt.Errorf("CancelOrder not yet implemented for Binance")
 }
 
-// === ACCOUNT & POSITIONS ===
 
 func (b *Binance) FetchAccountInfo(ctx context.Context) (*provider.AccountInfo, error) {
 	if b.restClient == nil {
@@ -246,10 +250,15 @@ func (b *Binance) FetchAccountInfo(ctx context.Context) (*provider.AccountInfo, 
 		}
 	}
 
+	leverage, err := b.restClient.GetLeverage(b.cfg.BinanceSymbol)
+	if err != nil {
+		return nil, fmt.Errorf("get leverage: %w", err)
+	}
+
 	return &provider.AccountInfo{
 		AccountID:        b.cfg.Binance.APIKey[:8],
 		Balance:          balance,
-		Leverage:         binanceLeverage,
+		Leverage:         leverage,
 		UsedMargin:       0,
 		FreeMargin:       balance,
 		AvailableBalance: balance,
@@ -293,13 +302,11 @@ func (b *Binance) QueryOpenPositions(ctx context.Context, symbol string) ([]prov
 	return positions, nil
 }
 
-// ClosePosition closes a futures position using reduceOnly.
-// positionID format: "BUY:{orderID}" or "SELL:{orderID}" — side prefix tells us which direction to close.
-// volume is in satoshis (100_000_000 = 1 BTC).
+
 func (b *Binance) ClosePosition(ctx context.Context, positionID string, volume int64) (string, error) {
-	closeSide := "SELL" // closing a LONG requires a SELL
+	closeSide := "SELL" 
 	if len(positionID) >= 5 && positionID[:5] == "SELL:" {
-		closeSide = "BUY" // closing a SHORT requires a BUY
+		closeSide = "BUY" 
 	}
 
 	qty := math.Floor(float64(volume)/100_000_000*1000) / 1000
@@ -314,7 +321,6 @@ func (b *Binance) ReconcilePositions(ctx context.Context) ([]provider.Position, 
 	return b.QueryOpenPositions(ctx, b.cfg.BinanceSymbol)
 }
 
-// === MARKET DATA & SUBSCRIPTIONS ===
 
 func (b *Binance) SubscribeCandles(ctx context.Context, symbol, timeframe string) error {
 	if b.wsClient == nil {
@@ -338,7 +344,6 @@ func (b *Binance) FetchHistoricalCandles(
 		return nil, fmt.Errorf("not connected")
 	}
 
-	// Convert timeframe to Binance interval format
 	interval := timeframeToInterval(timeframe)
 
 	klines, err := b.restClient.GetKlines(symbol, interval, count)
@@ -376,7 +381,6 @@ func (b *Binance) FetchLatestTick(ctx context.Context, symbol string) (*provider
 	return nil, fmt.Errorf("FetchLatestTick not yet implemented")
 }
 
-// === CREDENTIALS & REFRESH ===
 
 func (b *Binance) RefreshCredentials(ctx context.Context) error {
 	if b.restClient == nil {
@@ -412,7 +416,6 @@ func (b *Binance) ValidateCredentials(ctx context.Context) error {
 	return nil
 }
 
-// === EVENT STREAMS ===
 
 func (b *Binance) PriceChan() <-chan provider.PriceEvent {
 	return b.priceCh
@@ -434,7 +437,6 @@ func (b *Binance) DisconnectedChan() <-chan struct{} {
 	return b.disconnectedCh
 }
 
-// === PRIVATE METHODS ===
 
 func (b *Binance) forwardPriceEvents() {
 	for price := range b.wsClient.PriceChan() {
@@ -455,12 +457,11 @@ func (b *Binance) forwardPriceEvents() {
 
 func (b *Binance) forwardKlineEvents() {
 	for kline := range b.wsClient.KlineChan() {
-
 		select {
 		case b.candleCh <- provider.Candle{
 			Symbol:     kline.Symbol,
 			Timeframe:  intervalToTimeframe(kline.Interval),
-			OpenTime:   kline.OpenTime / 1000,
+			OpenTime:   kline.OpenTime,
 			Open:       kline.Open,
 			High:       kline.High,
 			Low:        kline.Low,
@@ -469,7 +470,7 @@ func (b *Binance) forwardKlineEvents() {
 			ReceivedAt: time.Now(),
 		}:
 		default:
-			slog.Warn("candle channel full, dropping message")
+			slog.Warn("candle channel full, dropping kline", "interval", kline.Interval)
 		}
 	}
 }

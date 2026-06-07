@@ -118,10 +118,7 @@ func (c *RestClient) GetAccount(useServerTime bool) (*AccountResponse, error) {
 	}
 
 	path := "/fapi/v2/account"
-	sig := c.sign(params.Encode())
-	params.Add("signature", sig)
-
-	resp, err := c.doRequest("GET", path, params)
+	resp, err := c.doSignedRequest("GET", path, params)
 	if err != nil {
 		return nil, err
 	}
@@ -151,11 +148,8 @@ func (c *RestClient) PlaceMarketOrder(symbol, side string, quantity float64) (or
 	params.Add("quantity", fmt.Sprintf("%.3f", quantity))
 	params.Add("timestamp", fmt.Sprintf("%d", time.Now().UnixMilli()))
 
-	sig := c.sign(params.Encode())
-	params.Add("signature", sig)
-
 	path := "/fapi/v1/order"
-	resp, err := c.doRequest("POST", path, params)
+	resp, err := c.doSignedRequest("POST", path, params)
 	if err != nil {
 		return "", err
 	}
@@ -186,11 +180,8 @@ func (c *RestClient) PlaceReduceOnlyOrder(symbol, side string, quantity float64)
 	params.Add("reduceOnly", "true")
 	params.Add("timestamp", fmt.Sprintf("%d", time.Now().UnixMilli()))
 
-	sig := c.sign(params.Encode())
-	params.Add("signature", sig)
-
 	path := "/fapi/v1/order"
-	resp, err := c.doRequest("POST", path, params)
+	resp, err := c.doSignedRequest("POST", path, params)
 	if err != nil {
 		return "", err
 	}
@@ -218,6 +209,7 @@ type PositionRiskResponse struct {
 	EntryPrice       string `json:"entryPrice"`
 	UnrealizedProfit string `json:"unrealizedProfit"`
 	PositionSide     string `json:"positionSide"`     // "BOTH" in one-way mode
+	Leverage         string `json:"leverage"`         // e.g. "20"
 }
 
 // GetOpenPositions returns futures positions with non-zero positionAmt.
@@ -228,11 +220,8 @@ func (c *RestClient) GetOpenPositions(symbol string) ([]PositionRiskResponse, er
 	}
 	params.Add("timestamp", fmt.Sprintf("%d", time.Now().UnixMilli()))
 
-	sig := c.sign(params.Encode())
-	params.Add("signature", sig)
-
 	path := "/fapi/v2/positionRisk"
-	resp, err := c.doRequest("GET", path, params)
+	resp, err := c.doSignedRequest("GET", path, params)
 	if err != nil {
 		return nil, err
 	}
@@ -257,6 +246,39 @@ func (c *RestClient) GetOpenPositions(symbol string) ([]PositionRiskResponse, er
 	return open, nil
 }
 
+// GetLeverage returns the current leverage set for symbol from /fapi/v2/positionRisk.
+func (c *RestClient) GetLeverage(symbol string) (float64, error) {
+	params := url.Values{}
+	params.Add("symbol", symbol)
+	params.Add("timestamp", fmt.Sprintf("%d", time.Now().UnixMilli()))
+
+	resp, err := c.doSignedRequest("GET", "/fapi/v2/positionRisk", params)
+	if err != nil {
+		return 0, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return 0, fmt.Errorf("GetLeverage failed: %d - %s", resp.StatusCode, string(body))
+	}
+
+	var positions []PositionRiskResponse
+	if err := json.NewDecoder(resp.Body).Decode(&positions); err != nil {
+		return 0, fmt.Errorf("decode positionRisk for leverage: %w", err)
+	}
+
+	for _, p := range positions {
+		if p.Symbol == symbol && p.Leverage != "" {
+			lev, err := strconv.ParseFloat(p.Leverage, 64)
+			if err == nil && lev > 0 {
+				return lev, nil
+			}
+		}
+	}
+	return 0, fmt.Errorf("leverage not found for symbol %s", symbol)
+}
+
 // GetOpenOrders fetches open orders for a symbol
 func (c *RestClient) GetOpenOrders(symbol string) ([]OpenOrderResponse, error) {
 	params := url.Values{}
@@ -265,11 +287,8 @@ func (c *RestClient) GetOpenOrders(symbol string) ([]OpenOrderResponse, error) {
 	}
 	params.Add("timestamp", fmt.Sprintf("%d", time.Now().UnixMilli()))
 
-	sig := c.sign(params.Encode())
-	params.Add("signature", sig)
-
 	path := "/fapi/v1/openOrders"
-	resp, err := c.doRequest("GET", path, params)
+	resp, err := c.doSignedRequest("GET", path, params)
 	if err != nil {
 		return nil, err
 	}
@@ -336,18 +355,27 @@ func (c *RestClient) GetKlines(symbol, interval string, limit int) ([]KlineRespo
 }
 
 func (c *RestClient) ValidateAPIKey() (bool, error) {
+	// Step 1: verify we can reach fapi at all.
+	pingResp, pingErr := c.doRequest("GET", "/fapi/v1/ping", url.Values{})
+	if pingErr != nil {
+		return false, fmt.Errorf("fapi ping failed: %w", pingErr)
+	}
+	pingResp.Body.Close()
+	if pingResp.StatusCode != http.StatusOK {
+		return false, fmt.Errorf("fapi ping returned %d — cannot reach fapi.binance.com", pingResp.StatusCode)
+	}
+
+	// Step 2: fetch server time and sign.
 	ts, err := c.getServerTime()
 	if err != nil {
-		ts = time.Now().UnixMilli()
+		return false, fmt.Errorf("fapi getServerTime failed: %w", err)
 	}
+
 	params := url.Values{}
 	params.Add("timestamp", fmt.Sprintf("%d", ts))
 
-	sig := c.sign(params.Encode())
-	params.Add("signature", sig)
-
 	path := "/fapi/v2/account"
-	resp, err := c.doRequest("GET", path, params)
+	resp, err := c.doSignedRequest("GET", path, params)
 	if err != nil {
 		return false, err
 	}
@@ -364,7 +392,9 @@ func (c *RestClient) doRequest(method, path string, params url.Values) (*http.Re
 	u := fmt.Sprintf("%s%s", c.baseURL, path)
 
 	if method == "GET" {
-		u = fmt.Sprintf("%s?%s", u, params.Encode())
+		if len(params) > 0 {
+			u = fmt.Sprintf("%s?%s", u, params.Encode())
+		}
 		req, err := http.NewRequest(method, u, nil)
 		if err != nil {
 			return nil, err
@@ -373,14 +403,41 @@ func (c *RestClient) doRequest(method, path string, params url.Values) (*http.Re
 		return c.httpClient.Do(req)
 	}
 
-	// POST request with params in body
 	req, err := http.NewRequest(method, u, strings.NewReader(params.Encode()))
 	if err != nil {
 		return nil, err
 	}
 	req.Header.Set("X-MBX-APIKEY", c.apiKey)
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	return c.httpClient.Do(req)
+}
 
+// doSignedRequest signs params and appends the signature last so Binance can verify correctly.
+// url.Values.Encode() sorts keys alphabetically — if signature were added to the map, it would
+// sort before timestamp, and Binance takes everything before &signature= as the signed payload,
+// producing an empty string. Appending manually ensures signature is always the final param.
+func (c *RestClient) doSignedRequest(method, path string, params url.Values) (*http.Response, error) {
+	encoded := params.Encode()
+	sig := c.sign(encoded)
+	signed := encoded + "&signature=" + sig
+
+	u := fmt.Sprintf("%s%s", c.baseURL, path)
+
+	if method == "GET" {
+		req, err := http.NewRequest(method, u+"?"+signed, nil)
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("X-MBX-APIKEY", c.apiKey)
+		return c.httpClient.Do(req)
+	}
+
+	req, err := http.NewRequest(method, u, strings.NewReader(signed))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("X-MBX-APIKEY", c.apiKey)
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	return c.httpClient.Do(req)
 }
 

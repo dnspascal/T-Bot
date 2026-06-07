@@ -41,6 +41,7 @@ type Bot struct {
 
 	balanceMu sync.Mutex
 	balance   float64
+	leverage  float64
 
 	pendingOrder       bool
 	pendingOrderID     string
@@ -83,6 +84,7 @@ func New(
 	db *pgxpool.Pool,
 	riskMgr *risk.Manager,
 	balance float64,
+	leverage float64,
 	lookup *symbol.SymbolLookup,
 	ticks *tick.Repository,
 	candles *candle.Repository,
@@ -103,6 +105,7 @@ func New(
 		db:             db,
 		riskMgr:        riskMgr,
 		balance:        balance,
+		leverage:       leverage,
 		registry:            newPositionRegistry(),
 		pendingCloseReasons: make(map[string]string),
 		tickCh:              make(chan tick.Tick, 500),
@@ -122,6 +125,7 @@ func New(
 
 func (b *Bot) Run(ctx context.Context, startedAt time.Time) {
 	b.reconcileOpenPositions(ctx)
+	b.logDBDiag(ctx)
 
 	go b.tokenRefresher(ctx)
 	go b.tickWriter(ctx)
@@ -246,9 +250,12 @@ func (b *Bot) reconcileOpenPositions(ctx context.Context) {
 }
 
 func (b *Bot) onCandleReceived(ctx context.Context, c provider.Candle) {
-	b.storeCandle(ctx, c)
+	dbCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
 
-	states, err := b.processorMgr.ProcessCandle(ctx, c.Timeframe, c.OpenTime, c.Open, c.High, c.Low, c.Close, c.Volume, c.ReceivedAt)
+	b.storeCandle(dbCtx, c)
+
+	states, err := b.processorMgr.ProcessCandle(dbCtx, c.Timeframe, c.OpenTime, c.Open, c.High, c.Low, c.Close, c.Volume, c.ReceivedAt)
 	if err != nil {
 		slog.Error("process candle failed", "timeframe", c.Timeframe, "err", err)
 	}
@@ -433,14 +440,22 @@ func (b *Bot) onTradeSignal(ctx context.Context, result EntryResult, price provi
 		if mid == 0 {
 			mid = (b.currentPrice.Bid + b.currentPrice.Ask) / 2
 		}
+		// Futures: balance controls margin, not notional.
+		// Actual buying power = leverage × balance. Use 0.80 safety margin.
 		if mid > 0 {
-			maxAffordable := int64((b.getBalance() / mid) * 100_000_000 * 0.90)
+			lev := b.leverage
+			if lev <= 0 {
+				lev = 1
+			}
+			maxAffordable := int64((b.getBalance() * lev / mid) * 100_000_000 * 0.80)
 			if volume > maxAffordable {
 				volume = maxAffordable
 			}
 		}
-		if volume < 20_000 {
-			minUSD := (20_000.0 / 100_000_000.0) * mid
+		// Minimum 0.001 BTC (100_000 satoshis) — anything smaller floors to 0 in qty %.3f formatting.
+		const binanceMinVolume = 100_000
+		if volume < binanceMinVolume {
+			minUSD := (binanceMinVolume / 100_000_000.0) * mid
 			slog.Warn("binance: signal skipped — balance too low to meet minimum order size",
 				"balance_usd", b.getBalance(), "min_order_usd", minUSD,
 			)
@@ -737,9 +752,50 @@ func (b *Bot) tickWriter(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case t := <-b.tickCh:
-			if err := b.ticks.Insert(ctx, t); err != nil {
+			dbCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+			err := b.ticks.Insert(dbCtx, t)
+			cancel()
+			if err != nil {
 				slog.Error("tick insert failed", "err", err)
 			}
+		}
+	}
+}
+
+func (b *Bot) logDBDiag(ctx context.Context) {
+	var searchPath string
+	_ = b.db.QueryRow(ctx, "SHOW search_path").Scan(&searchPath)
+
+	var candleCount, tickCount int
+	_ = b.db.QueryRow(ctx, "SELECT COUNT(*) FROM candles").Scan(&candleCount)
+	_ = b.db.QueryRow(ctx, "SELECT COUNT(*) FROM price_ticks").Scan(&tickCount)
+
+	slog.Info("db diag",
+		"search_path", searchPath,
+		"candles", candleCount,
+		"price_ticks", tickCount,
+		"symbol_uuid", b.symbolUUID,
+	)
+
+	if tickCount == 0 {
+		// price_ticks is a fresh TimescaleDB hypertable with no chunks yet.
+		// The first INSERT triggers chunk creation (DDL), which is slow on
+		// high-latency connections. Pre-warm it now with a long timeout so
+		// tickWriter's hot path never blocks on chunk creation.
+		slog.Info("pre-warming price_ticks chunk")
+		warmCtx, warmCancel := context.WithTimeout(ctx, 90*time.Second)
+		_, warmErr := b.db.Exec(warmCtx,
+			`INSERT INTO price_ticks (symbol_id, bid, ask, received_at, processing_us)
+			 VALUES ($1, 0.0, 0.0, NOW(), -1)`,
+			b.symbolUUID)
+		warmCancel()
+		if warmErr != nil {
+			slog.Warn("price_ticks chunk pre-warm failed", "err", warmErr)
+		} else {
+			cleanCtx, cleanCancel := context.WithTimeout(ctx, 15*time.Second)
+			b.db.Exec(cleanCtx, `DELETE FROM price_ticks WHERE processing_us = -1`)
+			cleanCancel()
+			slog.Info("price_ticks chunk ready")
 		}
 	}
 }
@@ -824,22 +880,10 @@ func (b *Bot) weekendPositionCloser(ctx context.Context) {
 func buildMarketStateSnapshots(states map[string]indicator.MarketState) map[string]signal.MarketStateSnapshot {
 	out := make(map[string]signal.MarketStateSnapshot, len(states))
 	for period, ms := range states {
-		if !ms.IsWarmedUp {
+		if !ms.IsWarmedUp || ms.ID == "" {
 			continue
 		}
-		out[period] = signal.MarketStateSnapshot{
-			MarketStateID:     ms.ID,
-			Regime:            ms.Regime,
-			ADX:               ms.ADX,
-			RSI:               ms.RSI,
-			EMAFast:           ms.EMAFast,
-			EMASlow:           ms.EMASlow,
-			ATR:               ms.ATR,
-			VolumeMA:          ms.VolumeMA,
-			MomentumDirection: ms.MomentumDirection,
-			SupportLevel:      ms.SupportLevel,
-			ResistanceLevel:   ms.ResistanceLevel,
-		}
+		out[period] = signal.MarketStateSnapshot{MarketStateID: ms.ID}
 	}
 	return out
 }

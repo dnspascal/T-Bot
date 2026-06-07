@@ -2,19 +2,10 @@ package signal
 
 import "time"
 
-// MarketStateSnapshot is the subset of indicator data stored per timeframe in checked_market_states.
+// MarketStateSnapshot references the market_states row used when evaluating a signal.
+// Full indicator values live in market_states — join on id to retrieve them.
 type MarketStateSnapshot struct {
-	MarketStateID     string  `json:"market_state_id,omitempty"`
-	Regime            string  `json:"regime"`
-	ADX               float64 `json:"adx"`
-	RSI               float64 `json:"rsi"`
-	EMAFast           float64 `json:"ema_fast"`
-	EMASlow           float64 `json:"ema_slow"`
-	ATR               float64 `json:"atr"`
-	VolumeMA          int64   `json:"volume_ma"`
-	MomentumDirection string  `json:"momentum_direction"`
-	SupportLevel      float64 `json:"support_level"`
-	ResistanceLevel   float64 `json:"resistance_level"`
+	MarketStateID string `json:"id"`
 }
 
 type Signal struct {

@@ -15,11 +15,11 @@ import (
 )
 
 const (
-	wsBaseURL    = "wss://fstream.binance.com/ws"
-	wsTestnetURL = "wss://stream.binancefuture.com/ws"
+	wsBaseURL    = "wss://fstream.binance.com"
+	wsTestnetURL = "wss://stream.binancefuture.com"
 
-	wsPingInterval = 3 * time.Minute 
-	wsReadTimeout  = 5 * time.Minute 
+	wsPingInterval = 3 * time.Minute
+	wsReadTimeout  = 5 * time.Minute
 )
 
 type jsonFloat float64
@@ -46,27 +46,6 @@ type wsEnvelope struct {
 	Data   json.RawMessage `json:"data"`
 }
 
-type wsKlineEvent struct {
-	Symbol string  `json:"s"`
-	K      wsKline `json:"k"`
-}
-
-type wsKline struct {
-	Symbol         string    `json:"s"`
-	Interval       string    `json:"i"`
-	OpenTime       int64     `json:"t"`
-	CloseTime      int64     `json:"T"`
-	Open           jsonFloat `json:"o"`
-	High           jsonFloat `json:"h"`
-	Low            jsonFloat `json:"l"`
-	Close          jsonFloat `json:"c"`
-	Volume         jsonFloat `json:"v"`
-	QuoteVolume    jsonFloat `json:"Q"`
-	TakerBuyVolume jsonFloat `json:"V"`
-	TradeCount     int64     `json:"n"`
-	IsClosed       bool      `json:"x"`
-}
-
 type wsBookTicker struct {
 	Symbol  string    `json:"s"`
 	Bid     jsonFloat `json:"b"`
@@ -75,27 +54,41 @@ type wsBookTicker struct {
 	AskSize jsonFloat `json:"A"`
 }
 
-type wsTrade struct {
-	Symbol    string    `json:"s"`
-	TradeID   int64     `json:"t"`
-	Price     jsonFloat `json:"p"`
-	Qty       jsonFloat `json:"q"`
-	BuyerID   int64     `json:"b"`
-	SellerID  int64     `json:"a"`
-	TradeTime int64     `json:"T"`
-	IsBuyer   bool      `json:"m"`
+type wsKlineEvent struct {
+	Symbol string  `json:"s"`
+	Kline  wsKline `json:"k"`
+}
+
+type wsKline struct {
+	OpenTime int64  `json:"t"`
+	Interval string `json:"i"`
+	Open     string `json:"o"`
+	High     string `json:"h"`
+	Low      string `json:"l"`
+	Close    string `json:"c"`
+	Volume   string `json:"v"`
+	IsClosed bool   `json:"x"`
+}
+
+type KlineData struct {
+	Symbol   string
+	Interval string
+	OpenTime int64 // unix seconds
+	Open     float64
+	High     float64
+	Low      float64
+	Close    float64
+	Volume   float64
 }
 
 type WebSocketClient struct {
 	symbol  string
-	period  string
 	baseURL string
 	conn    *websocket.Conn
 	mu      sync.RWMutex
 
 	priceCh  chan PriceData
 	klineCh  chan KlineData
-	tradeCh  chan TradeData
 	closedCh chan struct{}
 
 	ctx    context.Context
@@ -110,33 +103,7 @@ type PriceData struct {
 	Timestamp time.Time
 }
 
-type KlineData struct {
-	Symbol         string
-	Interval       string
-	OpenTime       int64
-	Open           float64
-	High           float64
-	Low            float64
-	Close          float64
-	Volume         float64
-	QuoteVolume    float64
-	TakerBuyVolume float64
-	TradeCount     int64
-	CloseTime      int64
-}
-
-type TradeData struct {
-	Symbol    string
-	TradeID   int64
-	Price     float64
-	Qty       float64
-	BuyerID   int64
-	SellerID  int64
-	TradeTime int64
-	IsBuyer   bool
-}
-
-func NewWebSocketClient(symbol, period string, testnet bool) *WebSocketClient {
+func NewWebSocketClient(symbol string, testnet bool) *WebSocketClient {
 	baseURL := wsBaseURL
 	if testnet {
 		baseURL = wsTestnetURL
@@ -146,11 +113,9 @@ func NewWebSocketClient(symbol, period string, testnet bool) *WebSocketClient {
 
 	return &WebSocketClient{
 		symbol:   symbol,
-		period:   period,
 		baseURL:  baseURL,
 		priceCh:  make(chan PriceData, 100),
-		klineCh:  make(chan KlineData, 100),
-		tradeCh:  make(chan TradeData, 100),
+		klineCh:  make(chan KlineData, 50),
 		closedCh: make(chan struct{}),
 		ctx:      ctx,
 		cancel:   cancel,
@@ -159,17 +124,13 @@ func NewWebSocketClient(symbol, period string, testnet bool) *WebSocketClient {
 
 func (w *WebSocketClient) buildURL() string {
 	symbol := strings.ToLower(w.symbol)
-	intervals := config.BinanceIntervals()
-	var klineStreams strings.Builder
-	for i, interval := range intervals {
-		if i > 0 {
-			klineStreams.WriteString("/")
-		}
-		fmt.Fprintf(&klineStreams, "%s@kline_%s", symbol, interval)
+	// Combined-stream URL subscribes to bookTicker + all kline intervals in one connection.
+	// Combined format wraps every message in {"stream":"...","data":{...}}, enabling clean routing.
+	streams := []string{symbol + "@bookTicker"}
+	for _, interval := range config.BinanceIntervals() {
+		streams = append(streams, fmt.Sprintf("%s@kline_%s", symbol, interval))
 	}
-	baseURLWithoutWs := strings.TrimSuffix(w.baseURL, "/ws")
-	return fmt.Sprintf("%s/stream?streams=%s@bookTicker/%s/%s@trade",
-		baseURLWithoutWs, symbol, klineStreams.String(), symbol)
+	return fmt.Sprintf("%s/stream?streams=%s", w.baseURL, strings.Join(streams, "/"))
 }
 
 func (w *WebSocketClient) dial() error {
@@ -217,8 +178,7 @@ func (w *WebSocketClient) Close() error {
 }
 
 func (w *WebSocketClient) PriceChan() <-chan PriceData { return w.priceCh }
-func (w *WebSocketClient) KlineChan() <-chan KlineData { return w.klineCh }
-func (w *WebSocketClient) TradeChan() <-chan TradeData { return w.tradeCh }
+func (w *WebSocketClient) KlineChan() <-chan KlineData  { return w.klineCh }
 func (w *WebSocketClient) ClosedChan() <-chan struct{}  { return w.closedCh }
 
 func (w *WebSocketClient) keepAlive() {
@@ -245,7 +205,6 @@ func (w *WebSocketClient) keepAlive() {
 func (w *WebSocketClient) readLoop() {
 	defer close(w.priceCh)
 	defer close(w.klineCh)
-	defer close(w.tradeCh)
 
 	backoff := 2 * time.Second
 	for {
@@ -304,18 +263,10 @@ func (w *WebSocketClient) processMessage(data json.RawMessage) {
 		return
 	}
 
-	payload := env.Data
-	if payload == nil {
-		payload = data
-	}
-
-	switch {
-	case strings.Contains(env.Stream, "@kline"):
-		w.processKline(payload)
-	case strings.Contains(env.Stream, "@trade"):
-		w.processTrade(payload)
-	case strings.Contains(env.Stream, "@bookTicker"):
-		w.processBookTicker(payload)
+	if strings.Contains(env.Stream, "@bookTicker") {
+		w.processBookTicker(env.Data)
+	} else if strings.Contains(env.Stream, "@kline_") {
+		w.processKline(env.Data)
 	}
 }
 
@@ -340,55 +291,34 @@ func (w *WebSocketClient) processBookTicker(data json.RawMessage) {
 }
 
 func (w *WebSocketClient) processKline(data json.RawMessage) {
-	var event wsKlineEvent
-	if err := json.Unmarshal(data, &event); err != nil {
+	var evt wsKlineEvent
+	if err := json.Unmarshal(data, &evt); err != nil {
 		slog.Debug("failed to unmarshal kline", "err", err)
 		return
 	}
-
-	k := event.K
-	if !k.IsClosed {
-		return
+	if !evt.Kline.IsClosed {
+		return // only emit completed candles
 	}
+
+	open, _ := strconv.ParseFloat(evt.Kline.Open, 64)
+	high, _ := strconv.ParseFloat(evt.Kline.High, 64)
+	low, _ := strconv.ParseFloat(evt.Kline.Low, 64)
+	close, _ := strconv.ParseFloat(evt.Kline.Close, 64)
+	vol, _ := strconv.ParseFloat(evt.Kline.Volume, 64)
 
 	select {
 	case w.klineCh <- KlineData{
-		Symbol:         k.Symbol,
-		Interval:       k.Interval,
-		OpenTime:       k.OpenTime,
-		Open:           float64(k.Open),
-		High:           float64(k.High),
-		Low:            float64(k.Low),
-		Close:          float64(k.Close),
-		Volume:         float64(k.Volume),
-		QuoteVolume:    float64(k.QuoteVolume),
-		TakerBuyVolume: float64(k.TakerBuyVolume),
-		TradeCount:     k.TradeCount,
-		CloseTime:      k.CloseTime,
+		Symbol:   evt.Symbol,
+		Interval: evt.Kline.Interval,
+		OpenTime: evt.Kline.OpenTime / 1000,
+		Open:     open,
+		High:     high,
+		Low:      low,
+		Close:    close,
+		Volume:   vol,
 	}:
 	default:
-		slog.Warn("kline channel full, dropping message")
+		slog.Warn("kline channel full, dropping closed candle", "interval", evt.Kline.Interval)
 	}
 }
 
-func (w *WebSocketClient) processTrade(data json.RawMessage) {
-	var t wsTrade
-	if err := json.Unmarshal(data, &t); err != nil {
-		slog.Debug("failed to unmarshal trade", "err", err)
-		return
-	}
-
-	select {
-	case w.tradeCh <- TradeData{
-		Symbol:    t.Symbol,
-		TradeID:   t.TradeID,
-		Price:     float64(t.Price),
-		Qty:       float64(t.Qty),
-		BuyerID:   t.BuyerID,
-		SellerID:  t.SellerID,
-		TradeTime: t.TradeTime,
-		IsBuyer:   t.IsBuyer,
-	}:
-	default:
-	}
-}

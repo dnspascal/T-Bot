@@ -36,8 +36,9 @@ func initializeBot(ctx context.Context, cfg *config.Config, svc *Services, prov 
 	case "binance":
 		// unitsPerMicroLot=100_000 satoshis (0.001 BTC per micro lot).
 		// pipValue=1e-7: 0.0001 price move × 0.001 BTC = $0.0000001/pip/micro-lot.
-		// minVolume=20_000 satoshis (0.0002 BTC ≈ $12 at $60k) clears NOTIONAL filter.
-		riskMgr.SetVolumeConfig(100_000, 20_000, 5_000_000, 1e-7)
+		// minVolume=100_000 satoshis (0.001 BTC) — the Binance futures LOT_SIZE minimum;
+		// anything smaller floors to qty=0 in the %.3f format used by PlaceMarketOrder.
+		riskMgr.SetVolumeConfig(100_000, 100_000, 5_000_000, 1e-7)
 	}
 	if todayLoss < 0 {
 		riskMgr.RestoreLoss(-todayLoss)
@@ -54,7 +55,7 @@ func initializeBot(ctx context.Context, cfg *config.Config, svc *Services, prov 
 		proc := marketstate.NewProcessor(symbolUUID, prov.Name(), period, buf, svc.Repos.MarketState)
 		processorMgr.AddProcessor(period, proc)
 	}
-	tradingBot := bot.New(cfg, prov, symbol, symbolUUID, authResult.AccountID, svc.DB.Pool, riskMgr, balance, svc.Lookup, svc.Repos.Ticks, svc.Repos.Candles, svc.Repos.Signals, svc.Repos.Orders, svc.Repos.Fills, svc.Repos.Positions, svc.Repos.PnLs, svc.Repos.Events, processorMgr)
+	tradingBot := bot.New(cfg, prov, symbol, symbolUUID, authResult.AccountID, svc.DB.Pool, riskMgr, balance, authResult.Leverage, svc.Lookup, svc.Repos.Ticks, svc.Repos.Candles, svc.Repos.Signals, svc.Repos.Orders, svc.Repos.Fills, svc.Repos.Positions, svc.Repos.PnLs, svc.Repos.Events, processorMgr)
 
 	return &BotInitResult{
 		Bot:          tradingBot,
