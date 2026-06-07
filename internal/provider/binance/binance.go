@@ -104,7 +104,7 @@ func (b *Binance) Auth(ctx context.Context) (*provider.AuthResult, error) {
 
 	authStart := time.Now()
 
-	account, err := b.restClient.GetAccount(false)
+	account, err := b.restClient.GetAccount(true)
 	if err != nil {
 		b.events.Insert(ctx, "auth_fail", map[string]any{"error": err.Error()}, elapsed(authStart))
 		return nil, fmt.Errorf("get account: %w", err)
@@ -232,7 +232,7 @@ func (b *Binance) FetchAccountInfo(ctx context.Context) (*provider.AccountInfo, 
 		return nil, fmt.Errorf("not connected")
 	}
 
-	account, err := b.restClient.GetAccount(false)
+	account, err := b.restClient.GetAccount(true)
 	if err != nil {
 		return nil, fmt.Errorf("get account: %w", err)
 	}

@@ -336,8 +336,12 @@ func (c *RestClient) GetKlines(symbol, interval string, limit int) ([]KlineRespo
 }
 
 func (c *RestClient) ValidateAPIKey() (bool, error) {
+	ts, err := c.getServerTime()
+	if err != nil {
+		ts = time.Now().UnixMilli()
+	}
 	params := url.Values{}
-	params.Add("timestamp", fmt.Sprintf("%d", time.Now().UnixMilli()))
+	params.Add("timestamp", fmt.Sprintf("%d", ts))
 
 	sig := c.sign(params.Encode())
 	params.Add("signature", sig)
@@ -349,7 +353,11 @@ func (c *RestClient) ValidateAPIKey() (bool, error) {
 	}
 	defer resp.Body.Close()
 
-	return resp.StatusCode == http.StatusOK, nil
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return false, fmt.Errorf("binance API rejected: %d - %s", resp.StatusCode, string(body))
+	}
+	return true, nil
 }
 
 func (c *RestClient) doRequest(method, path string, params url.Values) (*http.Response, error) {
