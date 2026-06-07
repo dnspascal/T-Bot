@@ -56,8 +56,8 @@ type Bot struct {
 
 	pendingCloseReasons map[string]string
 
-	tickCh      chan tick.Tick // bounded channel for async tick persistence
-	lastTickSaved time.Time    // throttle: persist at most once per second
+	tickCh      chan tick.Tick 
+	lastTickSaved time.Time    
 
 	db        *pgxpool.Pool
 	lookup    *symbol.SymbolLookup
@@ -374,8 +374,6 @@ func (b *Bot) onExecution(ctx context.Context, exec provider.ExecutionEvent) {
 	case "ORDER_FILLED":
 		if exec.Deal.IsClose {
 			b.recordCloseFill(ctx, exec)
-			// Prefer the balance the broker includes in the close deal; only fall
-			// back to FetchAccountInfo if it is missing (Binance spot, some demos).
 			if exec.Deal.Close != nil && exec.Deal.Close.Balance > 0 {
 				b.balanceMu.Lock()
 				b.balance = exec.Deal.Close.Balance
@@ -441,16 +439,14 @@ func (b *Bot) onTradeSignal(ctx context.Context, result EntryResult, price provi
 			// Use 90% of balance to leave a small buffer for fees.
 			maxAffordable := int64((b.getBalance() / mid) * 100_000_000 * 0.90)
 			if volume > maxAffordable {
-				slog.Info("binance: volume capped to affordable size",
-					"computed", volume, "capped", maxAffordable, "balance", b.getBalance(), "price", mid,
-				)
 				volume = maxAffordable
 			}
 		}
-		// After the cap, check we still meet the Binance NOTIONAL minimum (20,000 satoshis).
+		// After the cap, check we still meet the Binance NOTIONAL minimum (20,000 satoshis ≈ $12 at $60k BTC).
 		if volume < 20_000 {
-			slog.Warn("binance: volume below minimum after cap — signal skipped",
-				"volume", volume, "balance", b.getBalance(),
+			minUSD := (20_000.0 / 100_000_000.0) * mid
+			slog.Warn("binance: signal skipped — balance too low to meet minimum order size",
+				"balance_usd", b.getBalance(), "min_order_usd", minUSD,
 			)
 			return
 		}
@@ -739,8 +735,6 @@ func (b *Bot) onTick(_ context.Context, price provider.PriceEvent) {
 	}
 }
 
-// tickWriter drains the tick channel and persists ticks one at a time.
-// A single goroutine prevents unbounded goroutine growth under high tick rates.
 func (b *Bot) tickWriter(ctx context.Context) {
 	for {
 		select {
@@ -754,8 +748,6 @@ func (b *Bot) tickWriter(ctx context.Context) {
 	}
 }
 
-// Reset clears transient per-connection state so Run() can be called again after
-// a reconnect without carrying over stale flags from the dropped session.
 func (b *Bot) Reset() {
 	b.pendingOrder = false
 	b.pendingOrderID = ""
@@ -805,9 +797,6 @@ func (b *Bot) tokenRefresher(ctx context.Context) {
 	}
 }
 
-// weekendPositionCloser closes all open positions at 21:30 UTC on Friday, 30 minutes
-// before the forex market closes at 22:00 UTC. Prevents positions being held over the
-// weekend gap where SL/TP cannot execute.
 func (b *Bot) weekendPositionCloser(ctx context.Context) {
 	ticker := time.NewTicker(1 * time.Minute)
 	defer ticker.Stop()
@@ -887,7 +876,6 @@ func (b *Bot) sendTestPosition(ctx context.Context) {
 		return
 	}
 
-	// cTrader: 100_000 = 1 lot (broker minimum). Binance: 100_000 satoshis = 0.001 BTC ≈ $60.
 	testVolume := int64(100_000)
 	const (
 		testSLPips float64 = 10.0
@@ -929,7 +917,6 @@ func (b *Bot) sendTestPosition(ctx context.Context) {
 	b.pendingTPPrice = 0
 	b.pendingATR = 0
 
-	// Binance spot has no execution event — register the position immediately.
 	if b.provider.Name() == "binance" {
 		mid := b.currentPrice.Mid
 		if mid == 0 {

@@ -335,7 +335,7 @@ func (w *WebSocketClient) processBookTicker(data json.RawMessage) {
 		Timestamp: time.Now(),
 	}:
 	default:
-		slog.Warn("price channel full, dropping message")
+		// bookTicker fires hundreds/sec; channel is intentionally throttled — silent drop is expected.
 	}
 }
 
