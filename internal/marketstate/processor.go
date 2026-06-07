@@ -15,6 +15,7 @@ type Processor struct {
 	buffer     CandleBuffer
 	calculator *indicator.Calculator
 	repo       Repository
+	lastID     string
 }
 
 func NewProcessor(
@@ -49,7 +50,8 @@ func (p *Processor) WarmCandle(openTime int64, open, high, low, close float64, v
 }
 
 func (p *Processor) Commit(ctx context.Context) error {
-	return p.repo.Insert(ctx, p.calculator.LastState())
+	_, err := p.repo.Insert(ctx, p.calculator.LastState())
+	return err
 }
 
 func (p *Processor) ProcessCandle(ctx context.Context, openTime int64, open, high, low, close float64, volume int64, receivedAt time.Time) (indicator.MarketState, error) {
@@ -70,16 +72,21 @@ func (p *Processor) ProcessCandle(ctx context.Context, openTime int64, open, hig
 
 	marketState.ProcessingUS = time.Since(receivedAt).Microseconds()
 
-	if err := p.repo.Insert(ctx, marketState); err != nil {
+	id, err := p.repo.Insert(ctx, marketState)
+	if err != nil {
 		slog.Error("failed to store market state", "period", p.period, "symbolID", p.symbolID, "err", err)
 		return marketState, err
 	}
+	p.lastID = id
+	marketState.ID = id
 
 	return marketState, nil
 }
 
 func (p *Processor) State() indicator.MarketState {
-	return p.calculator.LastState()
+	s := p.calculator.LastState()
+	s.ID = p.lastID
+	return s
 }
 
 // IsWarmedUp returns true if this processor has enough data for all indicators.

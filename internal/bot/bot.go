@@ -844,6 +844,7 @@ func buildMarketStateSnapshots(states map[string]indicator.MarketState) map[stri
 			continue
 		}
 		out[period] = signal.MarketStateSnapshot{
+			MarketStateID:     ms.ID,
 			Regime:            ms.Regime,
 			ADX:               ms.ADX,
 			RSI:               ms.RSI,

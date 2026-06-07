@@ -1,6 +1,7 @@
 package indicator
 
 type MarketState struct {
+	ID           string
 	SymbolID     string
 	Provider     string
 	Period       string

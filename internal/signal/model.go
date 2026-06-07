@@ -4,6 +4,7 @@ import "time"
 
 // MarketStateSnapshot is the subset of indicator data stored per timeframe in checked_market_states.
 type MarketStateSnapshot struct {
+	MarketStateID     string  `json:"market_state_id,omitempty"`
 	Regime            string  `json:"regime"`
 	ADX               float64 `json:"adx"`
 	RSI               float64 `json:"rsi"`

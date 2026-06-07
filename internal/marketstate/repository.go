@@ -22,7 +22,7 @@ type CandleRow struct {
 // Repository defines storage interface for market states
 // Easy to swap implementations (PostgreSQL, Mock, etc.)
 type Repository interface {
-	Insert(ctx context.Context, state indicator.MarketState) error
+	Insert(ctx context.Context, state indicator.MarketState) (string, error)
 	Get(ctx context.Context, symbolID, provider, period string, barTime int64) (indicator.MarketState, error)
 	GetLatest(ctx context.Context, symbolID, provider, period string) (indicator.MarketState, error)
 	GetLastCandles(ctx context.Context, symbol, timeframe string, limit int) ([]CandleRow, error)
@@ -37,11 +37,12 @@ func NewPostgresRepository(db *pgxpool.Pool) *PostgresRepository {
 	return &PostgresRepository{db: db}
 }
 
-// Insert stores or updates a market state
-func (r *PostgresRepository) Insert(ctx context.Context, state indicator.MarketState) error {
+// Insert stores or updates a market state and returns the row's UUID.
+func (r *PostgresRepository) Insert(ctx context.Context, state indicator.MarketState) (string, error) {
 	barTime := time.Unix(state.BarTime, 0).UTC()
 
-	_, err := r.db.Exec(ctx, `
+	var id string
+	err := r.db.QueryRow(ctx, `
 		INSERT INTO market_states (
 			symbol_id, provider, period, bar_time, processing_us,
 			open, high, low, close, volume,
@@ -71,13 +72,14 @@ func (r *PostgresRepository) Insert(ctx context.Context, state indicator.MarketS
 			volatility_trend = EXCLUDED.volatility_trend,
 			momentum_direction = EXCLUDED.momentum_direction,
 			volume_ma = EXCLUDED.volume_ma
+		RETURNING id
 	`, state.SymbolID, state.Provider, state.Period, barTime, state.ProcessingUS,
 		state.Open, state.High, state.Low, state.Close, state.Volume,
 		state.EMAFast, state.EMASlow, state.RSI, state.ADX, state.ATR,
 		state.SupportLevel, state.ResistanceLevel, state.TrendHigh, state.TrendLow, state.BreakoutLevel,
-		state.Regime, state.VolatilityTrend, state.MomentumDirection, state.VolumeMA)
+		state.Regime, state.VolatilityTrend, state.MomentumDirection, state.VolumeMA).Scan(&id)
 
-	return err
+	return id, err
 }
 
 // Get retrieves a specific market state
@@ -167,10 +169,10 @@ func NewMockRepository() *MockRepository {
 	}
 }
 
-func (m *MockRepository) Insert(ctx context.Context, state indicator.MarketState) error {
+func (m *MockRepository) Insert(ctx context.Context, state indicator.MarketState) (string, error) {
 	key := state.SymbolID + ":" + state.Provider + ":" + state.Period + ":" + strconv.FormatInt(state.BarTime, 10)
 	m.states[key] = state
-	return nil
+	return "", nil
 }
 
 func (m *MockRepository) Get(ctx context.Context, symbolID, provider, period string, barTime int64) (indicator.MarketState, error) {

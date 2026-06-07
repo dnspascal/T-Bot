@@ -1,6 +1,5 @@
 -- Trading decision record: what action we decided to take and why.
 -- One row per decision (BUY/SELL/HOLD) when M5 candle closes.
--- Stores references to market_states across timeframes in flexible JSONB (scales to any timeframe combo).
 CREATE TABLE signals (
     id              UUID            NOT NULL DEFAULT gen_random_uuid(),
     symbol_id       UUID            NOT NULL REFERENCES symbols(id),
@@ -9,24 +8,12 @@ CREATE TABLE signals (
     -- The decision
     signal          TEXT            NOT NULL CHECK (signal IN ('BUY', 'SELL', 'HOLD')),
 
-    -- Market states checked across timeframes (flexible, scalable)
-    -- Example:
-    -- {
-    --   "M5": {"market_state_id": "uuid-m5", "regime": "trending_up", "adx": 28},
-    --   "H1": {"market_state_id": "uuid-h1", "regime": "trending_up", "adx": 32},
-    --   "H4": {"market_state_id": "uuid-h4", "regime": "ranging", "adx": 18},
-    --   "D1": {"market_state_id": "uuid-d1", "regime": "trending_up", "adx": 40}
-    -- }
+    -- Snapshot of indicator values per timeframe at decision time.
+    -- market_state_id references the market_states row (no FK — both are hypertables).
     checked_market_states JSONB,
 
     -- Quality metrics
-    confluence      INT             DEFAULT 0,  -- 0-N: how many timeframes agreed
-    -- 0 = no conviction (HOLD)
-    -- 1 = weak signal (only 1 timeframe/indicator agreed)
-    -- 2 = moderate (2 timeframes agreed)
-    -- 3 = strong (3 timeframes agreed)
-    -- 4+ = very strong (4+ timeframes agreed)
-
+    confluence      INT             DEFAULT 0,  -- how many timeframes/factors agreed (>=2 required to trade)
     confidence      NUMERIC(5,2),               -- 0.0-1.0: estimated win probability (from backtest/historical)
 
     -- Performance
