@@ -428,21 +428,17 @@ func (b *Bot) onTradeSignal(ctx context.Context, result EntryResult, price provi
 		return
 	}
 
-	// Binance spot: cap volume so we never try to buy more BTC than the balance can afford.
-	// Without this, small balances produce orders larger than available USDT → instant rejection.
 	if b.provider.Name() == "binance" {
 		mid := b.currentPrice.Mid
 		if mid == 0 {
 			mid = (b.currentPrice.Bid + b.currentPrice.Ask) / 2
 		}
 		if mid > 0 {
-			// Use 90% of balance to leave a small buffer for fees.
 			maxAffordable := int64((b.getBalance() / mid) * 100_000_000 * 0.90)
 			if volume > maxAffordable {
 				volume = maxAffordable
 			}
 		}
-		// After the cap, check we still meet the Binance NOTIONAL minimum (20,000 satoshis ≈ $12 at $60k BTC).
 		if volume < 20_000 {
 			minUSD := (20_000.0 / 100_000_000.0) * mid
 			slog.Warn("binance: signal skipped — balance too low to meet minimum order size",
