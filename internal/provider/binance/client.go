@@ -15,8 +15,8 @@ import (
 )
 
 const (
-	baseURL        = "https://api.binance.com"
-	testnetBaseURL = "https://testnet.binance.vision"
+	baseURL        = "https://fapi.binance.com"
+	testnetBaseURL = "https://testnet.binancefuture.com"
 )
 
 type RestClient struct {
@@ -26,28 +26,25 @@ type RestClient struct {
 	httpClient *http.Client
 }
 
-// AccountResponse from Binance API
+// AccountResponse from Binance USD-M Futures API (/fapi/v2/account)
 type AccountResponse struct {
-	CanTrade         bool   `json:"canTrade"`
-	CanDeposit       bool   `json:"canDeposit"`
-	CanWithdraw      bool   `json:"canWithdraw"`
-	TotalAssetOfBTC  string `json:"totalAssetOfBtc"`
-	MakerCommission  int    `json:"makerCommission"`
-	TakerCommission  int    `json:"takerCommission"`
-	BuyerCommission  int    `json:"buyerCommission"`
-	SellerCommission int    `json:"sellerCommission"`
-	CommissionRates  struct {
-		Maker  string `json:"maker"`
-		Taker  string `json:"taker"`
-		Buyer  string `json:"buyer"`
-		Seller string `json:"seller"`
-	} `json:"commissionRates"`
-	Balances []struct {
-		Asset  string `json:"asset"`
-		Free   string `json:"free"`
-		Locked string `json:"locked"`
-	} `json:"balances"`
-	Permissions []string `json:"permissions"`
+	CanTrade  bool `json:"canTrade"`
+	CanDeposit bool `json:"canDeposit"`
+	CanWithdraw bool `json:"canWithdraw"`
+	Assets []struct {
+		Asset                  string `json:"asset"`
+		WalletBalance          string `json:"walletBalance"`
+		UnrealizedProfit       string `json:"unrealizedProfit"`
+		MarginBalance          string `json:"marginBalance"`
+		AvailableBalance       string `json:"availableBalance"`
+	} `json:"assets"`
+	Positions []struct {
+		Symbol           string `json:"symbol"`
+		PositionAmt      string `json:"positionAmt"`
+		EntryPrice       string `json:"entryPrice"`
+		UnrealizedProfit string `json:"unrealizedProfit"`
+		PositionSide     string `json:"positionSide"`
+	} `json:"positions"`
 }
 
 // OpenOrderResponse from Binance API
@@ -120,7 +117,7 @@ func (c *RestClient) GetAccount(useServerTime bool) (*AccountResponse, error) {
 		params.Add("timestamp", fmt.Sprintf("%d", time.Now().UnixMilli()))
 	}
 
-	path := "/api/v3/account"
+	path := "/fapi/v2/account"
 	sig := c.sign(params.Encode())
 	params.Add("signature", sig)
 
@@ -151,13 +148,13 @@ func (c *RestClient) PlaceMarketOrder(symbol, side string, quantity float64) (or
 	params.Add("symbol", symbol)
 	params.Add("side", side)
 	params.Add("type", "MARKET")
-	params.Add("quantity", fmt.Sprintf("%.8f", quantity))
+	params.Add("quantity", fmt.Sprintf("%.3f", quantity))
 	params.Add("timestamp", fmt.Sprintf("%d", time.Now().UnixMilli()))
 
 	sig := c.sign(params.Encode())
 	params.Add("signature", sig)
 
-	path := "/api/v3/order"
+	path := "/fapi/v1/order"
 	resp, err := c.doRequest("POST", path, params)
 	if err != nil {
 		return "", err
@@ -179,6 +176,87 @@ func (c *RestClient) PlaceMarketOrder(symbol, side string, quantity float64) (or
 	return fmt.Sprintf("%d", orderResp.OrderID), nil
 }
 
+// PlaceReduceOnlyOrder closes an existing futures position without opening a new one.
+func (c *RestClient) PlaceReduceOnlyOrder(symbol, side string, quantity float64) (string, error) {
+	params := url.Values{}
+	params.Add("symbol", symbol)
+	params.Add("side", side)
+	params.Add("type", "MARKET")
+	params.Add("quantity", fmt.Sprintf("%.3f", quantity))
+	params.Add("reduceOnly", "true")
+	params.Add("timestamp", fmt.Sprintf("%d", time.Now().UnixMilli()))
+
+	sig := c.sign(params.Encode())
+	params.Add("signature", sig)
+
+	path := "/fapi/v1/order"
+	resp, err := c.doRequest("POST", path, params)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("PlaceReduceOnlyOrder failed: %d - %s", resp.StatusCode, string(body))
+	}
+
+	var orderResp struct {
+		OrderID int64 `json:"orderId"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&orderResp); err != nil {
+		return "", fmt.Errorf("decode order response: %w", err)
+	}
+
+	return fmt.Sprintf("%d", orderResp.OrderID), nil
+}
+
+// PositionRiskResponse represents one entry from /fapi/v2/positionRisk
+type PositionRiskResponse struct {
+	Symbol           string `json:"symbol"`
+	PositionAmt      string `json:"positionAmt"`      // negative = short, positive = long, "0" = no position
+	EntryPrice       string `json:"entryPrice"`
+	UnrealizedProfit string `json:"unrealizedProfit"`
+	PositionSide     string `json:"positionSide"`     // "BOTH" in one-way mode
+}
+
+// GetOpenPositions returns futures positions with non-zero positionAmt.
+func (c *RestClient) GetOpenPositions(symbol string) ([]PositionRiskResponse, error) {
+	params := url.Values{}
+	if symbol != "" {
+		params.Add("symbol", symbol)
+	}
+	params.Add("timestamp", fmt.Sprintf("%d", time.Now().UnixMilli()))
+
+	sig := c.sign(params.Encode())
+	params.Add("signature", sig)
+
+	path := "/fapi/v2/positionRisk"
+	resp, err := c.doRequest("GET", path, params)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("GetOpenPositions failed: %d - %s", resp.StatusCode, string(body))
+	}
+
+	var all []PositionRiskResponse
+	if err := json.NewDecoder(resp.Body).Decode(&all); err != nil {
+		return nil, fmt.Errorf("decode positionRisk response: %w", err)
+	}
+
+	var open []PositionRiskResponse
+	for _, p := range all {
+		if p.PositionAmt != "0" && p.PositionAmt != "0.000" {
+			open = append(open, p)
+		}
+	}
+	return open, nil
+}
+
 // GetOpenOrders fetches open orders for a symbol
 func (c *RestClient) GetOpenOrders(symbol string) ([]OpenOrderResponse, error) {
 	params := url.Values{}
@@ -190,7 +268,7 @@ func (c *RestClient) GetOpenOrders(symbol string) ([]OpenOrderResponse, error) {
 	sig := c.sign(params.Encode())
 	params.Add("signature", sig)
 
-	path := "/api/v3/openOrders"
+	path := "/fapi/v1/openOrders"
 	resp, err := c.doRequest("GET", path, params)
 	if err != nil {
 		return nil, err
@@ -216,7 +294,7 @@ func (c *RestClient) GetKlines(symbol, interval string, limit int) ([]KlineRespo
 	params.Add("interval", interval)
 	params.Add("limit", strconv.Itoa(limit))
 
-	path := "/api/v3/klines"
+	path := "/fapi/v1/klines"
 	resp, err := c.doRequest("GET", path, params)
 	if err != nil {
 		return nil, err
@@ -264,7 +342,7 @@ func (c *RestClient) ValidateAPIKey() (bool, error) {
 	sig := c.sign(params.Encode())
 	params.Add("signature", sig)
 
-	path := "/api/v3/account"
+	path := "/fapi/v2/account"
 	resp, err := c.doRequest("GET", path, params)
 	if err != nil {
 		return false, err
@@ -305,7 +383,7 @@ func (c *RestClient) sign(data string) string {
 }
 
 func (c *RestClient) getServerTime() (int64, error) {
-	path := "/api/v3/time"
+	path := "/fapi/v1/time"
 	resp, err := c.doRequest("GET", path, url.Values{})
 	if err != nil {
 		return 0, err

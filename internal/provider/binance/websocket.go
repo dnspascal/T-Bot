@@ -15,8 +15,8 @@ import (
 )
 
 const (
-	wsBaseURL    = "wss://stream.binance.com:9443/ws"
-	wsTestnetURL = "wss://stream.testnet.binance.vision/ws"
+	wsBaseURL    = "wss://fstream.binance.com/ws"
+	wsTestnetURL = "wss://stream.binancefuture.com/ws"
 
 	wsPingInterval = 3 * time.Minute 
 	wsReadTimeout  = 5 * time.Minute 

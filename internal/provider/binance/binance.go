@@ -111,12 +111,10 @@ func (b *Binance) Auth(ctx context.Context) (*provider.AuthResult, error) {
 	}
 
 	var balance float64
-	for _, bal := range account.Balances {
-		if bal.Asset == binanceQuoteCurrency {
-			val, _ := strconv.ParseFloat(bal.Free, 64)
-			balance += val
-			val2, _ := strconv.ParseFloat(bal.Locked, 64)
-			balance += val2
+	for _, asset := range account.Assets {
+		if asset.Asset == binanceQuoteCurrency {
+			val, _ := strconv.ParseFloat(asset.WalletBalance, 64)
+			balance = val
 			break
 		}
 	}
@@ -126,12 +124,15 @@ func (b *Binance) Auth(ctx context.Context) (*provider.AuthResult, error) {
 	}
 	slog.Info("USDT balance loaded from API", "balance", balance)
 
-	openOrders, err := b.restClient.GetOpenOrders("")
-	hasOpenPosition := len(openOrders) > 0
+	openPositions, err := b.restClient.GetOpenPositions(b.cfg.BinanceSymbol)
+	if err != nil {
+		openPositions = nil // non-fatal: positions endpoint may need extra permission
+	}
+	hasOpenPosition := len(openPositions) > 0
 
 	b.events.Insert(ctx, "auth_ok", map[string]any{
 		"balance":        balance,
-		"open_positions": len(openOrders),
+		"open_positions": len(openPositions),
 	}, elapsed(authStart))
 
 	trigger := "startup"
@@ -181,8 +182,8 @@ func (b *Binance) PlaceMarketOrder(
 		return "", fmt.Errorf("not connected")
 	}
 
-	// Convert satoshis to BTC and truncate to 5 decimal places (BTCUSDT LOT_SIZE step = 0.00001).
-	qty := math.Floor(float64(volume)/100_000_000*100000) / 100000
+	// Futures BTCUSDT LOT_SIZE step = 0.001 BTC (3 decimal places).
+	qty := math.Floor(float64(volume)/100_000_000*1000) / 1000
 
 	slog.Info("placing market order", "symbol", b.cfg.BinanceSymbol, "side", side, "qty", qty)
 	orderID, err = b.restClient.PlaceMarketOrder(b.cfg.BinanceSymbol, side, qty)
@@ -237,11 +238,10 @@ func (b *Binance) FetchAccountInfo(ctx context.Context) (*provider.AccountInfo, 
 	}
 
 	var balance float64
-	for _, bal := range account.Balances {
-		if bal.Asset == binanceQuoteCurrency {
-			free, _ := strconv.ParseFloat(bal.Free, 64)
-			locked, _ := strconv.ParseFloat(bal.Locked, 64)
-			balance = free + locked
+	for _, asset := range account.Assets {
+		if asset.Asset == binanceQuoteCurrency {
+			val, _ := strconv.ParseFloat(asset.WalletBalance, 64)
+			balance = val
 			break
 		}
 	}
@@ -264,43 +264,54 @@ func (b *Binance) QueryOpenPositions(ctx context.Context, symbol string) ([]prov
 		return nil, fmt.Errorf("not connected")
 	}
 
-	orders, err := b.restClient.GetOpenOrders(symbol)
+	risks, err := b.restClient.GetOpenPositions(symbol)
 	if err != nil {
 		return nil, err
 	}
 
 	var positions []provider.Position
-	for _, order := range orders {
-		qtyFloat, _ := strconv.ParseFloat(order.ExecutedQty, 64)
-		qty := int64(qtyFloat * 100_000_000) // satoshis
-		price, _ := strconv.ParseFloat(order.Price, 64)
+	for _, p := range risks {
+		amt, _ := strconv.ParseFloat(p.PositionAmt, 64)
+		entry, _ := strconv.ParseFloat(p.EntryPrice, 64)
+
+		side := "BUY"
+		if amt < 0 {
+			side = "SELL"
+			amt = -amt
+		}
+		qty := int64(amt * 100_000_000) // satoshis
 
 		positions = append(positions, provider.Position{
-			PositionID: fmt.Sprintf("%d", order.OrderID),
-			Symbol:     order.Symbol,
-			Side:       order.Side,
+			PositionID: side + ":futures",
+			Symbol:     p.Symbol,
+			Side:       side,
 			Volume:     qty,
-			OpenPrice:  price,
-			OpenTime:   time.Unix(0, order.Time*int64(time.Millisecond)),
+			OpenPrice:  entry,
 		})
 	}
 
 	return positions, nil
 }
 
-// ClosePosition closes a spot long position by placing a SELL market order.
-// volume is in satoshis (100_000_000 = 1 BTC). positionID is unused for spot.
+// ClosePosition closes a futures position using reduceOnly.
+// positionID format: "BUY:{orderID}" or "SELL:{orderID}" — side prefix tells us which direction to close.
+// volume is in satoshis (100_000_000 = 1 BTC).
 func (b *Binance) ClosePosition(ctx context.Context, positionID string, volume int64) (string, error) {
-	qty := math.Floor(float64(volume)/100_000_000*100000) / 100000
-	orderID, err := b.restClient.PlaceMarketOrder(b.cfg.BinanceSymbol, "SELL", qty)
+	closeSide := "SELL" // closing a LONG requires a SELL
+	if len(positionID) >= 5 && positionID[:5] == "SELL:" {
+		closeSide = "BUY" // closing a SHORT requires a BUY
+	}
+
+	qty := math.Floor(float64(volume)/100_000_000*1000) / 1000
+	orderID, err := b.restClient.PlaceReduceOnlyOrder(b.cfg.BinanceSymbol, closeSide, qty)
 	if err != nil {
-		return "", fmt.Errorf("ClosePosition (SELL): %w", err)
+		return "", fmt.Errorf("ClosePosition (%s): %w", closeSide, err)
 	}
 	return orderID, nil
 }
 
 func (b *Binance) ReconcilePositions(ctx context.Context) ([]provider.Position, error) {
-	return b.QueryOpenPositions(ctx, "")
+	return b.QueryOpenPositions(ctx, b.cfg.BinanceSymbol)
 }
 
 // === MARKET DATA & SUBSCRIPTIONS ===

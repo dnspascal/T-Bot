@@ -490,7 +490,7 @@ func (b *Bot) onTradeSignal(ctx context.Context, result EntryResult, price provi
 			mid = (price.Bid + price.Ask) / 2
 		}
 		b.registry.Register(trackedPosition{
-			ProviderPositionID: orderID,
+			ProviderPositionID: result.Signal + ":" + orderID,
 			Side:               result.Signal,
 			Tier:               result.Tier,
 			Volume:             volume,
@@ -776,7 +776,6 @@ func (b *Bot) getBalance() float64 {
 }
 
 func (b *Bot) tokenRefresher(ctx context.Context) {
-	// cTrader access tokens expire after 1 hour; refresh at 55 min to stay ahead.
 	ticker := time.NewTicker(55 * time.Minute)
 	defer ticker.Stop()
 	for {
