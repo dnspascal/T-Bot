@@ -55,6 +55,8 @@ type Bot struct {
 	lastCandleOpenTime int64
 	lastCandleClose    float64
 
+	forceTestOrder bool 
+
 	pendingCloseReasons map[string]string
 
 	tickCh      chan tick.Tick 
@@ -139,7 +141,8 @@ func (b *Bot) Run(ctx context.Context, startedAt time.Time) {
 	discCh := b.provider.DisconnectedChan()
 
 	if b.cfg.SendTestPosition {
-		b.sendTestPosition(ctx)
+		b.forceTestOrder = true
+		slog.Warn("SEND_TEST_POSITION=true — will place one real BUY on next M5 close via full pipeline")
 	}
 
 	for {
@@ -305,6 +308,21 @@ func (b *Bot) processClosedCandle(ctx context.Context, _ float64) {
 	evalStart := time.Now()
 	result := evaluateEntry(states, mid)
 
+	if b.forceTestOrder && result.Signal == "HOLD" {
+		slog.Warn("FORCE_TEST_ORDER: overriding HOLD with BUY for pipeline test")
+		result = EntryResult{
+			Signal:     "BUY",
+			Confluence: 1,
+			Tier:       TierNormal,
+			SLPrice:    mid - m5.ATR*slATRMult,
+			TPPrice:    mid + m5.ATR*tpATRMult,
+			SLPips:     m5.ATR * slATRMult / pipSize,
+			TPPips:     m5.ATR * tpATRMult / pipSize,
+			ATR:        m5.ATR,
+		}
+		b.forceTestOrder = false
+	}
+
 	barTime := time.Unix(m5.BarTime, 0).UTC()
 	signalID, err := b.signals.Insert(ctx, signal.Signal{
 		SymbolID:            b.symbolUUID,
@@ -318,8 +336,6 @@ func (b *Bot) processClosedCandle(ctx context.Context, _ float64) {
 	if err != nil {
 		slog.Error("insert signal failed", "err", err)
 	}
-
-
 
 	if result.Signal == "HOLD" {
 		return
@@ -440,8 +456,6 @@ func (b *Bot) onTradeSignal(ctx context.Context, result EntryResult, price provi
 		if mid == 0 {
 			mid = (b.currentPrice.Bid + b.currentPrice.Ask) / 2
 		}
-		// Futures: balance controls margin, not notional.
-		// Actual buying power = leverage × balance. Use 0.80 safety margin.
 		if mid > 0 {
 			lev := b.leverage
 			if lev <= 0 {
@@ -452,7 +466,6 @@ func (b *Bot) onTradeSignal(ctx context.Context, result EntryResult, price provi
 				volume = maxAffordable
 			}
 		}
-		// Minimum 0.001 BTC (100_000 satoshis) — anything smaller floors to 0 in qty %.3f formatting.
 		const binanceMinVolume = 100_000
 		if volume < binanceMinVolume {
 			minUSD := (binanceMinVolume / 100_000_000.0) * mid
@@ -626,7 +639,6 @@ func (b *Bot) recordCloseFill(ctx context.Context, exec provider.ExecutionEvent)
 	provOrderID := fmt.Sprintf("%d", deal.OrderID)
 	provPosID := fmt.Sprintf("%d", deal.PositionID)
 
-	// Grab everything we need before removing from registry.
 	var maxFav, maxAdv *float64
 	var closeReason *string
 	if tracked, ok := b.registry.Get(provPosID); ok {
@@ -637,7 +649,6 @@ func (b *Bot) recordCloseFill(ctx context.Context, exec provider.ExecutionEvent)
 		closeReason = &reason
 		delete(b.pendingCloseReasons, provPosID)
 	} else {
-		// Position was closed by cTrader's SL/TP mechanism — infer from P&L.
 		r := inferCloseReason(cl.GrossProfit)
 		closeReason = &r
 	}
@@ -778,10 +789,7 @@ func (b *Bot) logDBDiag(ctx context.Context) {
 	)
 
 	if tickCount == 0 {
-		// price_ticks is a fresh TimescaleDB hypertable with no chunks yet.
-		// The first INSERT triggers chunk creation (DDL), which is slow on
-		// high-latency connections. Pre-warm it now with a long timeout so
-		// tickWriter's hot path never blocks on chunk creation.
+		
 		slog.Info("pre-warming price_ticks chunk")
 		warmCtx, warmCancel := context.WithTimeout(ctx, 90*time.Second)
 		_, warmErr := b.db.Exec(warmCtx,

@@ -293,12 +293,14 @@ func (w *WebSocketClient) processBookTicker(data json.RawMessage) {
 func (w *WebSocketClient) processKline(data json.RawMessage) {
 	var evt wsKlineEvent
 	if err := json.Unmarshal(data, &evt); err != nil {
-		slog.Debug("failed to unmarshal kline", "err", err)
+		slog.Warn("failed to unmarshal kline", "err", err, "raw", string(data))
 		return
 	}
+	slog.Info("kline event", "interval", evt.Kline.Interval, "closed", evt.Kline.IsClosed)
 	if !evt.Kline.IsClosed {
 		return // only emit completed candles
 	}
+	slog.Info("kline closed", "interval", evt.Kline.Interval, "open_time", evt.Kline.OpenTime)
 
 	open, _ := strconv.ParseFloat(evt.Kline.Open, 64)
 	high, _ := strconv.ParseFloat(evt.Kline.High, 64)

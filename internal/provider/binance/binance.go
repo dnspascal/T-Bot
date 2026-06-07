@@ -82,7 +82,8 @@ func (b *Binance) StartStreaming() error {
 		return fmt.Errorf("websocket connect: %w", err)
 	}
 	go b.forwardPriceEvents()
-	go b.forwardKlineEvents()
+	go b.forwardKlineEvents()    // no-op when kline streams are geo-filtered (e.g. Tanzania ISPs)
+	go b.pollKlines(b.wsClient.ctx) // REST fallback: always works, closed candles are immutable
 	return nil
 }
 
@@ -471,6 +472,58 @@ func (b *Binance) forwardKlineEvents() {
 		}:
 		default:
 			slog.Warn("candle channel full, dropping kline", "interval", kline.Interval)
+		}
+	}
+}
+
+func (b *Binance) pollKlines(ctx context.Context) {
+	lastSeen := make(map[string]int64)
+
+	poll := func() {
+		for _, interval := range config.BinanceIntervals() {
+			klines, err := b.restClient.GetKlines(b.cfg.BinanceSymbol, interval, 2)
+			if err != nil || len(klines) < 2 {
+				continue
+			}
+			closed := klines[len(klines)-2]
+			if closed.OpenTime <= lastSeen[interval] {
+				continue
+			}
+			lastSeen[interval] = closed.OpenTime
+
+			open, _ := strconv.ParseFloat(closed.Open, 64)
+			high, _ := strconv.ParseFloat(closed.High, 64)
+			low, _ := strconv.ParseFloat(closed.Low, 64)
+			closePx, _ := strconv.ParseFloat(closed.Close, 64)
+			vol, _ := strconv.ParseFloat(closed.Volume, 64)
+
+			select {
+			case b.candleCh <- provider.Candle{
+				Symbol:     b.cfg.BinanceSymbol,
+				Timeframe:  intervalToTimeframe(interval),
+				OpenTime:   closed.OpenTime / 1000,
+				Open:       open,
+				High:       high,
+				Low:        low,
+				Close:      closePx,
+				Volume:     int64(vol),
+				ReceivedAt: time.Now(),
+			}:
+			default:
+				slog.Warn("candle channel full, dropping polled kline", "interval", interval)
+			}
+		}
+	}
+
+	poll()
+	ticker := time.NewTicker(15 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			poll()
 		}
 	}
 }
