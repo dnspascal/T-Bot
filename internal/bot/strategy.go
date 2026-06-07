@@ -14,15 +14,15 @@ const (
 	TierVeryStrong = 3 
 
 	rsiMidline      = 50.0
-	rsiOversold     = 40.0 // ranging BUY: RSI below this = momentum exhausted at support
-	rsiOverbought   = 60.0 // ranging SELL: RSI above this = momentum exhausted at resistance
-	srProximityMult = 1.5  // within 1.5×ATR of S/R counts as "near"
-	srStabilityMult = 1.5  // max allowed spread between TF S/R levels, in ATR units
+	rsiOversold     = 40.0 
+	rsiOverbought   = 60.0 
+	srProximityMult = 1.5  
+	srStabilityMult = 1.5  
 	slATRMult       = 1.5
 	tpATRMult       = 2.5
-	slRangeBuffer   = 0.25 // SL: 25% of ATR outside S/R — absorbs wicks
-	tpRangeBuffer   = 0.15 // TP: 15% of ATR inside S/R — fills before reversal
-	minRR           = 1.5 // minimum TP:SL ratio
+	slRangeBuffer   = 0.25 
+	tpRangeBuffer   = 0.15 
+	minRR           = 1.5 
 )
 
 var confluenceTimeframes = []string{"M15", "M30", "H1", "H4"}
