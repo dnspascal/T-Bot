@@ -377,7 +377,7 @@ func decodeReconcileRes(data []byte) []OpenPosition {
 		i += n
 		field := tag >> 3
 		wire := tag & 0x7
-		if field == 3 && wire == 2 { // repeated ProtoOAPosition (field2=ctidTraderAccountId, field3=position)
+		if field == 3 && wire == 2 { 
 			l, n2 := decodeVarint(data[i:])
 			i += n2
 			pos := decodeOAPosition(data[i : i+int(l)])
@@ -535,12 +535,12 @@ func decodeFullExecutionEvent(data []byte) (execType string, deal DealInfo, hasD
 			v, n2 := decodeVarint(data[i:])
 			i += n2
 			execType = execTypeString(v)
-		case field == 4 && wire == 2: // position (ProtoOAPosition) — always present
+		case field == 4 && wire == 2: 
 			l, n2 := decodeVarint(data[i:])
 			i += n2
 			rawPosition = data[i : i+int(l)]
 			i += int(l)
-		case field == 6 && wire == 2: // deal (ProtoOADeal) — optional, may be absent for broker-side closes
+		case field == 6 && wire == 2: 
 			l, n2 := decodeVarint(data[i:])
 			i += n2
 			rawDeal = data[i : i+int(l)]
@@ -553,7 +553,6 @@ func decodeFullExecutionEvent(data []byte) (execType string, deal DealInfo, hasD
 		deal = decodeDeal(rawDeal)
 		hasDeal = true
 	}
-	// When deal is absent (broker-side TP/SL close), read positionId+status from the position field.
 	if rawPosition != nil && !hasDeal {
 		posID, isClosed := decodePositionIDAndStatus(rawPosition)
 		if isClosed {
@@ -563,8 +562,7 @@ func decodeFullExecutionEvent(data []byte) (execType string, deal DealInfo, hasD
 	return
 }
 
-// decodePositionIDAndStatus extracts positionId (field 1) and positionStatus (field 3) from a
-// ProtoOAPosition message. Returns (positionId, isClosed) where isClosed means status==CLOSED (2).
+
 func decodePositionIDAndStatus(data []byte) (positionID int64, isClosed bool) {
 	i := 0
 	for i < len(data) {
@@ -576,11 +574,11 @@ func decodePositionIDAndStatus(data []byte) (positionID int64, isClosed bool) {
 		field := tag >> 3
 		wire := tag & 0x7
 		switch {
-		case field == 1 && wire == 0: // positionId
+		case field == 1 && wire == 0: 
 			v, n2 := decodeVarint(data[i:])
 			i += n2
 			positionID = int64(v)
-		case field == 3 && wire == 0: // positionStatus: 1=OPEN, 2=CLOSED
+		case field == 3 && wire == 0: 
 			v, n2 := decodeVarint(data[i:])
 			i += n2
 			isClosed = v == 2
@@ -903,6 +901,47 @@ func decodeVarint(b []byte) (uint64, int) {
 		s += 7
 	}
 	return 0, 0
+}
+
+// encodeDealListReq queries all deals in [fromMs, toMs] (epoch ms).
+// Wire field offsets follow the cTrader pattern: proto field N → wire field N+1
+// (field 1 is reserved for the payloadType prefix).
+// ProtoOADealListReq fields: ctidTraderAccountId=1(wire2), fromTimestamp=3(wire4), toTimestamp=4(wire5), maxRows=5(wire6)
+func encodeDealListReq(accountID, fromMs, toMs int64, maxRows int32) []byte {
+	var b []byte
+	b = appendUint32(b, 1, ProtoOADealListReq)
+	b = appendInt64(b, 2, accountID)
+	b = appendInt64(b, 4, fromMs)
+	b = appendInt64(b, 5, toMs)
+	if maxRows > 0 {
+		b = appendUint32(b, 6, uint32(maxRows))
+	}
+	return b
+}
+
+// decodeDealListRes parses ProtoOADealListRes inner payload.
+// ProtoOADealListRes: ctidTraderAccountId=1(wire2), repeated deal=2(wire3).
+func decodeDealListRes(data []byte) []DealInfo {
+	var deals []DealInfo
+	i := 0
+	for i < len(data) {
+		tag, n := decodeVarint(data[i:])
+		if n == 0 {
+			break
+		}
+		i += n
+		field := tag >> 3
+		wire := tag & 0x7
+		if field == 3 && wire == 2 { // repeated ProtoOADeal (proto field 2 → wire field 3)
+			l, n2 := decodeVarint(data[i:])
+			i += n2
+			deals = append(deals, decodeDeal(data[i:i+int(l)]))
+			i += int(l)
+			continue
+		}
+		i = skipField(data, i, wire)
+	}
+	return deals
 }
 
 func encodeGetAccountListReq(accessToken string) []byte {

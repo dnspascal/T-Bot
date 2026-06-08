@@ -18,8 +18,14 @@ const signalsToReduce = 2
 
 func (b *Bot) watchPositions(ctx context.Context, ms indicator.MarketState) {
 	for _, pos := range b.registry.All() {
-		if _, pending := b.pendingCloseReasons[pos.ProviderPositionID]; pending {
-			continue
+		if pc, pending := b.pendingCloseReasons[pos.ProviderPositionID]; pending {
+			if time.Since(pc.sentAt) < pendingCloseTimeout {
+				continue
+			}
+			slog.Warn("pending close timed out — retrying if conditions still met",
+				"posID", pos.ProviderPositionID, "reason", pc.reason,
+			)
+			delete(b.pendingCloseReasons, pos.ProviderPositionID)
 		}
 
 		b.registry.UpdatePeaks(pos.ProviderPositionID, ms.Close)
@@ -123,8 +129,14 @@ func peakDrawbackPct(pos trackedPosition, currentPrice float64) float64 {
 
 func (b *Bot) checkPeakDrawback(ctx context.Context, currentPrice float64) {
 	for _, pos := range b.registry.All() {
-		if _, pending := b.pendingCloseReasons[pos.ProviderPositionID]; pending {
-			continue
+		if pc, pending := b.pendingCloseReasons[pos.ProviderPositionID]; pending {
+			if time.Since(pc.sentAt) < pendingCloseTimeout {
+				continue
+			}
+			slog.Warn("pending close timed out — retrying",
+				"posID", pos.ProviderPositionID, "reason", pc.reason,
+			)
+			delete(b.pendingCloseReasons, pos.ProviderPositionID)
 		}
 
 		b.registry.UpdatePeaks(pos.ProviderPositionID, currentPrice)
@@ -203,5 +215,5 @@ func (b *Bot) closeTrackedPosition(ctx context.Context, pos trackedPosition, rea
 		return
 	}
 
-	b.pendingCloseReasons[pos.ProviderPositionID] = reason
+	b.pendingCloseReasons[pos.ProviderPositionID] = pendingClose{reason: reason, sentAt: time.Now()}
 }

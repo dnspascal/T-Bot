@@ -28,6 +28,14 @@ import (
 
 const pipSize = 0.0001
 
+const pendingOrderTimeout = 30 * time.Second
+const pendingCloseTimeout = 30 * time.Second
+
+type pendingClose struct {
+	reason string
+	sentAt time.Time
+}
+
 type Bot struct {
 	cfg          *config.Config
 	provider     provider.Provider
@@ -57,7 +65,7 @@ type Bot struct {
 
 	forceTestOrder bool 
 
-	pendingCloseReasons map[string]string
+	pendingCloseReasons map[string]pendingClose
 
 	tickCh      chan tick.Tick 
 	lastTickSaved time.Time    
@@ -109,7 +117,7 @@ func New(
 		balance:        balance,
 		leverage:       leverage,
 		registry:            newPositionRegistry(),
-		pendingCloseReasons: make(map[string]string),
+		pendingCloseReasons: make(map[string]pendingClose),
 		tickCh:              make(chan tick.Tick, 500),
 		lookup:         lookup,
 		ticks:          ticks,
@@ -206,9 +214,7 @@ func (b *Bot) reconcileOpenPositions(ctx context.Context) {
 			slog.Warn("startup reconcile: position closed at broker while bot was offline — purging",
 				"provider", b.provider.Name(), "posID", p.ProviderPositionID,
 			)
-			if dbErr := b.positions.Close(ctx, b.provider.Name(), p.ProviderPositionID, time.Now(), nil, nil); dbErr != nil {
-				slog.Error("startup reconcile: failed to mark position closed in DB", "posID", p.ProviderPositionID, "err", dbErr)
-			}
+			b.reconcileOfflineClose(ctx, p)
 			purged++
 			continue
 		}
@@ -253,6 +259,130 @@ func (b *Bot) reconcileOpenPositions(ctx context.Context) {
 	)
 }
 
+
+type dealFetcher interface {
+	FetchClosedDeal(positionID string, openTime time.Time) (*provider.DealInfo, error)
+}
+
+
+func (b *Bot) reconcileOfflineClose(ctx context.Context, p position.Position) {
+	posID := p.ProviderPositionID
+	var openTime time.Time
+	if p.OpenTimestamp != nil {
+		openTime = *p.OpenTimestamp
+	}
+
+	df, canFetch := b.provider.(dealFetcher)
+	if !canFetch {
+		slog.Warn("startup reconcile: provider does not support deal history — position marked closed without PnL",
+			"posID", posID,
+		)
+		if err := b.positions.Close(ctx, b.provider.Name(), posID, time.Now(), nil, nil); err != nil {
+			slog.Error("startup reconcile: positions.Close failed", "posID", posID, "err", err)
+		}
+		return
+	}
+
+	deal, err := df.FetchClosedDeal(posID, openTime)
+	if err != nil {
+		slog.Error("startup reconcile: FetchClosedDeal failed — marking closed without PnL",
+			"posID", posID, "err", err,
+		)
+		if dbErr := b.positions.Close(ctx, b.provider.Name(), posID, time.Now(), nil, nil); dbErr != nil {
+			slog.Error("startup reconcile: positions.Close failed", "posID", posID, "err", dbErr)
+		}
+		return
+	}
+	if deal == nil {
+		slog.Warn("startup reconcile: close deal not found in broker history — marking closed without PnL",
+			"posID", posID,
+		)
+		if err := b.positions.Close(ctx, b.provider.Name(), posID, time.Now(), nil, nil); err != nil {
+			slog.Error("startup reconcile: positions.Close failed", "posID", posID, "err", err)
+		}
+		return
+	}
+
+	cl := deal.Close
+	if cl == nil {
+		slog.Warn("startup reconcile: deal has no closePositionDetail — marking closed without PnL",
+			"posID", posID, "dealID", deal.DealID,
+		)
+		if err := b.positions.Close(ctx, b.provider.Name(), posID, deal.ExecTime, nil, nil); err != nil {
+			slog.Error("startup reconcile: positions.Close failed", "posID", posID, "err", err)
+		}
+		return
+	}
+
+	closeTime := deal.ExecTime
+	if closeTime.IsZero() {
+		closeTime = time.Now()
+	}
+	if err := b.positions.Close(ctx, b.provider.Name(), posID, closeTime, nil, nil); err != nil {
+		slog.Error("startup reconcile: positions.Close failed", "posID", posID, "err", err)
+	}
+
+	closeSide := "SELL"
+	if deal.TradeSide == 1 { // TradeSideBuy (1): closing order was BUY → position was SELL
+		closeSide = "BUY"
+	}
+	provPosID := posID
+	reason := inferCloseReason(cl.GrossProfit)
+	dealID := fmt.Sprintf("%d", deal.DealID)
+	orderID := fmt.Sprintf("%d", deal.OrderID)
+	entryPrice := cl.EntryPrice
+	closedVolume := cl.ClosedVolume
+	grossProfit := cl.GrossProfit
+	swap := cl.Swap
+	closeCommission := cl.Commission
+	balanceAfter := cl.Balance
+	pnlFee := cl.PnLConversionFee
+	dealCommission := deal.Commission
+
+	if err := b.fills.Insert(ctx, fill.Fill{
+		Provider:           b.provider.Name(),
+		ProviderFillID:     dealID,
+		ProviderOrderID:    &orderID,
+		ProviderPositionID: &provPosID,
+		SymbolID:           b.symbolUUID,
+		Side:               closeSide,
+		Volume:             &deal.Volume,
+		FilledVolume:       &deal.FilledVolume,
+		ExecutionPrice:     &deal.ExecutionPrice,
+		EventType:          "close",
+		Commission:         &dealCommission,
+		CloseEntryPrice:    &entryPrice,
+		GrossProfit:        &grossProfit,
+		CloseSwap:          &swap,
+		CloseCommission:    &closeCommission,
+		BalanceAfter:       &balanceAfter,
+		ClosedVolume:       &closedVolume,
+		PnLConversionFee:   &pnlFee,
+		CloseReason:        &reason,
+		ProviderCreateTime: &deal.CreateTime,
+		ProviderExecTime:   &deal.ExecTime,
+		ReceivedAt:         time.Now(),
+	}); err != nil {
+		slog.Error("startup reconcile: fills.Insert failed", "posID", posID, "err", err)
+	}
+
+	realized := cl.GrossProfit + cl.Commission + cl.Swap
+	isWin := realized > 0
+	if err := b.pnls.Upsert(ctx, b.symbolUUID, realized, cl.GrossProfit, cl.Commission, cl.Swap, isWin, 0, 0); err != nil {
+		slog.Error("startup reconcile: pnls.Upsert failed", "posID", posID, "err", err)
+	}
+	b.riskMgr.RecordTrade(realized)
+
+	slog.Info("startup reconcile: offline close recorded from broker history",
+		"posID", posID,
+		"dealID", deal.DealID,
+		"closePrice", deal.ExecutionPrice,
+		"grossProfit", cl.GrossProfit,
+		"realized", realized,
+		"reason", reason,
+	)
+}
+
 func (b *Bot) onCandleReceived(ctx context.Context, c provider.Candle) {
 	dbCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
@@ -286,6 +416,14 @@ func (b *Bot) onCandleReceived(ctx context.Context, c provider.Candle) {
 }
 
 func (b *Bot) processClosedCandle(ctx context.Context, _ float64) {
+	if b.pendingOrder && time.Since(b.pendingOrderSentAt) > pendingOrderTimeout {
+		slog.Warn("pending order timed out — clearing to allow new signals",
+			"orderID", b.pendingOrderID,
+			"elapsed", time.Since(b.pendingOrderSentAt).Round(time.Second),
+		)
+		b.pendingOrder = false
+	}
+
 	if !b.processorMgr.AllWarmedUp() {
 		slog.Info("warming up indicators")
 		return
@@ -708,8 +846,8 @@ func (b *Bot) recordCloseFill(ctx context.Context, exec provider.ExecutionEvent)
 		maxFav = &tracked.MaxFavorable
 		maxAdv = &tracked.MaxAdverse
 	}
-	if reason, ok := b.pendingCloseReasons[provPosID]; ok {
-		closeReason = &reason
+	if pc, ok := b.pendingCloseReasons[provPosID]; ok {
+		closeReason = &pc.reason
 		delete(b.pendingCloseReasons, provPosID)
 	} else {
 		r := inferCloseReason(cl.GrossProfit)
@@ -783,9 +921,7 @@ func (b *Bot) recordCloseFill(ctx context.Context, exec provider.ExecutionEvent)
 	}, 0)
 }
 
-// recordBrokerClose handles a position closed server-side (TP/SL hit) where Pepperstone's demo
-// server sends the execution event without a deal payload. Financials are estimated from the
-// current mid price and the tracked position's open price.
+
 func (b *Bot) recordBrokerClose(ctx context.Context, exec provider.ExecutionEvent) {
 	posID := exec.ClosedPositionID
 
@@ -793,8 +929,8 @@ func (b *Bot) recordBrokerClose(ctx context.Context, exec provider.ExecutionEven
 	b.registry.Remove(posID)
 
 	var closeReason string
-	if reason, ok := b.pendingCloseReasons[posID]; ok {
-		closeReason = reason
+	if pc, ok := b.pendingCloseReasons[posID]; ok {
+		closeReason = pc.reason
 		delete(b.pendingCloseReasons, posID)
 	}
 
@@ -916,7 +1052,7 @@ func (b *Bot) tickWriter(ctx context.Context) {
 func (b *Bot) Reset() {
 	b.pendingOrder = false
 	b.pendingOrderID = ""
-	b.pendingCloseReasons = make(map[string]string)
+	b.pendingCloseReasons = make(map[string]pendingClose)
 	b.lastCandleOpenTime = 0
 	b.lastCandleClose = 0
 	b.pendingSide = ""

@@ -44,6 +44,7 @@ type Client struct {
 	reconcileResCh chan []OpenPosition
 	trendbarsResCh chan []Trendbar
 	accountListCh  chan []CtidAccount
+	dealListResCh  chan []DealInfo
 }
 
 func NewClient(demo bool, accountID, symbolID int64) *Client {
@@ -57,6 +58,7 @@ func NewClient(demo bool, accountID, symbolID int64) *Client {
 		reconcileResCh: make(chan []OpenPosition, 1),
 		trendbarsResCh: make(chan []Trendbar, 1),
 		accountListCh:  make(chan []CtidAccount, 1),
+		dealListResCh:  make(chan []DealInfo, 1),
 	}
 	c.conn = NewConnection(demo, c.handleMessage)
 	return c
@@ -150,6 +152,34 @@ func (c *Client) FetchHistoricalTrendbars(period uint32, count int) ([]Trendbar,
 	}
 }
 
+
+// GetDealsForPosition fetches all deals in [from, now] and returns the close deal
+// for the given positionID, or nil if not found.
+func (c *Client) GetDealsForPosition(positionID int64, from time.Time) (*DealInfo, error) {
+	fromMs := from.UnixMilli()
+	toMs := time.Now().UnixMilli()
+	if err := c.conn.SendRaw(ProtoOADealListReq,
+		encodeDealListReq(c.accountID, fromMs, toMs, 500)); err != nil {
+		return nil, fmt.Errorf("GetDealsForPosition send: %w", err)
+	}
+	select {
+	case deals := <-c.dealListResCh:
+		for i := range deals {
+			d := &deals[i]
+			if d.PositionID == positionID && d.IsClose {
+				return d, nil
+			}
+		}
+		return nil, nil
+	case <-time.After(15 * time.Second):
+		// Drain any late-arriving response so it doesn't corrupt the next call.
+		select {
+		case <-c.dealListResCh:
+		default:
+		}
+		return nil, fmt.Errorf("GetDealsForPosition: timeout waiting for response")
+	}
+}
 
 func (c *Client) ClosePosition(positionID, volume int64) error {
 	c.mu.Lock()
@@ -285,6 +315,13 @@ func (c *Client) handleMessage(payloadType uint32, payload []byte) {
 			"orderID", orderID,
 			"description", description,
 		)
+
+	case ProtoOADealListRes:
+		deals := decodeDealListRes(payload)
+		select {
+		case c.dealListResCh <- deals:
+		default:
+		}
 
 	case ProtoOAGetAccountListByAccessTokenRes:
 		accounts := decodeAccountListRes(payload)

@@ -20,6 +20,9 @@ const (
 	ProtoOAGetAccountListByAccessTokenReq = uint32(2149)
 	ProtoOAGetAccountListByAccessTokenRes = uint32(2150)
 
+	ProtoOADealListReq = uint32(2161)
+	ProtoOADealListRes = uint32(2162)
+
 
 	ProtoOASubscribeLiveTrendbarReq = uint32(2135)
 	ProtoOASubscribeLiveTrendbarRes = uint32(2165)

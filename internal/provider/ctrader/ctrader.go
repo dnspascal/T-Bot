@@ -69,7 +69,6 @@ func (c *CTrader) Auth(ctx context.Context) (*provider.AuthResult, error) {
 		slog.Info("loaded cTrader refresh token from DB")
 	}
 
-	// Authenticate app
 	authStart := time.Now()
 	if err := c.client.AuthApp(c.ctCfg.ClientID, c.ctCfg.ClientSecret); err != nil {
 		c.events.Insert(ctx, "auth_fail", map[string]any{"error": err.Error(), "stage": "app_auth"}, elapsed(authStart))
@@ -155,7 +154,6 @@ func (c *CTrader) Auth(ctx context.Context) (*provider.AuthResult, error) {
 		"broker":   brokerName,
 	}, elapsed(fetchStart))
 
-	// Reconcile open positions
 	reconcileStart := time.Now()
 	openPositions, err := c.client.Reconcile()
 	if err != nil {
@@ -188,7 +186,6 @@ func elapsed(t time.Time) int64 {
 	return time.Since(t).Milliseconds()
 }
 
-// === ORDER PLACEMENT ===
 
 func (c *CTrader) PlaceMarketOrder(
 	ctx context.Context,
@@ -199,8 +196,7 @@ func (c *CTrader) PlaceMarketOrder(
 ) (orderID string, err error) {
 	sideUint32 := stringToSide(side)
 	err = c.client.PlaceMarketOrder(sideUint32, volume, slPips, tpPips)
-	// Note: cTrader doesn't return order ID; the order is placed asynchronously
-	// The actual order ID comes through the execution event channel
+
 	return "", err
 }
 
@@ -233,7 +229,6 @@ func (c *CTrader) CancelOrder(ctx context.Context, orderID string) error {
 	return fmt.Errorf("CancelOrder not yet implemented for cTrader")
 }
 
-// === ACCOUNT & POSITIONS ===
 
 func (c *CTrader) FetchAccountInfo(ctx context.Context) (*provider.AccountInfo, error) {
 	info, err := c.client.FetchAccountInfo()
@@ -294,14 +289,54 @@ func (c *CTrader) ClosePosition(ctx context.Context, positionID string, volume i
 	if err := c.client.ClosePosition(posID, volume); err != nil {
 		return "", fmt.Errorf("ClosePosition: %w", err)
 	}
-	return "", nil // closeOrderID arrives via ExecutionEvent when the fill comes back
+	return "", nil 
 }
 
 func (c *CTrader) ReconcilePositions(ctx context.Context) ([]provider.Position, error) {
 	return c.QueryOpenPositions(ctx, "")
 }
 
-// === MARKET DATA & SUBSCRIPTIONS ===
+
+func (c *CTrader) FetchClosedDeal(positionID string, openTime time.Time) (*provider.DealInfo, error) {
+	var posID int64
+	if _, err := fmt.Sscanf(positionID, "%d", &posID); err != nil {
+		return nil, fmt.Errorf("FetchClosedDeal: invalid positionID %q: %w", positionID, err)
+	}
+	from := openTime
+	if from.IsZero() {
+		from = time.Now().Add(-48 * time.Hour)
+	}
+	d, err := c.client.GetDealsForPosition(posID, from)
+	if err != nil || d == nil {
+		return nil, err
+	}
+	info := &provider.DealInfo{
+		DealID:         d.DealID,
+		OrderID:        d.OrderID,
+		PositionID:     d.PositionID,
+		FilledVolume:   d.FilledVolume,
+		Volume:         d.Volume,
+		ExecutionPrice: d.ExecutionPrice,
+		Commission:     d.Commission,
+		TradeSide:      d.TradeSide,
+		CreateTime:     d.CreateTime,
+		ExecTime:       d.ExecTime,
+		IsClose:        true,
+	}
+	if d.IsClose {
+		info.Close = &provider.CloseInfo{
+			ClosedVolume:     d.Close.ClosedVolume,
+			EntryPrice:       d.Close.EntryPrice,
+			GrossProfit:      d.Close.GrossProfit,
+			Swap:             d.Close.Swap,
+			Commission:       d.Close.Commission,
+			Balance:          d.Close.Balance,
+			PnLConversionFee: d.Close.PnLConversionFee,
+		}
+	}
+	return info, nil
+}
+
 
 func (c *CTrader) SubscribeCandles(ctx context.Context, symbol, timeframe string) error {
 	period := stringToPeriod(timeframe)
@@ -344,7 +379,6 @@ func (c *CTrader) FetchLatestTick(ctx context.Context, symbol string) (*provider
 	return nil, fmt.Errorf("FetchLatestTick not yet implemented for cTrader")
 }
 
-// === CREDENTIALS & REFRESH ===
 
 func (c *CTrader) RefreshCredentials(ctx context.Context) error {
 	newAccessToken, newRefreshToken, err := api.RefreshToken(c.ctCfg.ClientID, c.ctCfg.ClientSecret, c.ctCfg.RefreshToken)
@@ -383,7 +417,6 @@ func (c *CTrader) ValidateCredentials(ctx context.Context) error {
 	return nil
 }
 
-// === EVENT STREAMS ===
 
 func (c *CTrader) PriceChan() <-chan provider.PriceEvent {
 	out := make(chan provider.PriceEvent, 100)
@@ -511,7 +544,6 @@ func (c *CTrader) DisconnectedChan() <-chan struct{} {
 	return c.client.Dead()
 }
 
-// === HELPER FUNCTIONS ===
 
 func stringToSide(side string) uint32 {
 	if side == "BUY" {
