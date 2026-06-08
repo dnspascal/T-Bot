@@ -24,7 +24,8 @@ type ExecutionEvent struct {
 type CtidAccount struct {
 	CtidTraderAccountID int64
 	IsLive              bool
-	TraderLogin         int64 
+	TraderLogin         int64
+	BrokerName          string
 }
 
 type Client struct {
@@ -232,7 +233,6 @@ func (c *Client) handleMessage(payloadType uint32, payload []byte) {
 		}
 
 	case ProtoOATraderRes:
-		slog.Debug("ProtoOATraderRes received", "payloadHex", fmt.Sprintf("%x", payload))
 		if info, ok := decodeTraderRes(payload); ok {
 			slog.Info("account info received",
 				"balance", info.Balance,
@@ -244,11 +244,7 @@ func (c *Client) handleMessage(payloadType uint32, payload []byte) {
 			default:
 			}
 		} else {
-			// Server sent a ProtoOATraderRes with no usable trader data (demo
-			// accounts on some brokers echo only a clientMsgId). Unblock
-			// FetchAccountInfo immediately so it returns to the fallback balance
-			// rather than waiting for the full 10-second timeout.
-			slog.Warn("decodeTraderRes: server returned no trader data — falling back to configured balance")
+			slog.Warn("ProtoOATraderRes: no usable trader data in server response")
 			select {
 			case c.traderResCh <- TraderInfo{}:
 			default:
@@ -307,7 +303,7 @@ func (c *Client) handleMessage(payloadType uint32, payload []byte) {
 	case 51: 
 
 	default:
-		slog.Debug("unhandled message", "payloadType", payloadType)
+		slog.Debug("unhandled message", "payloadType", payloadType, "payloadHex", fmt.Sprintf("%x", payload))
 	}
 }
 

@@ -83,6 +83,7 @@ func (c *CTrader) Auth(ctx context.Context) (*provider.AuthResult, error) {
 	}
 
 	var ctidAccountID int64
+	var accountBrokerName string
 	mode := "demo"
 	if c.ctCfg.Demo {
 		mode = "demo"
@@ -92,10 +93,12 @@ func (c *CTrader) Auth(ctx context.Context) (*provider.AuthResult, error) {
 	for _, acc := range accounts {
 		if acc.IsLive == !c.ctCfg.Demo {
 			ctidAccountID = acc.CtidTraderAccountID
+			accountBrokerName = acc.BrokerName
 			slog.Info("found trading account",
 				"ctidTraderAccountID", acc.CtidTraderAccountID,
 				"traderLogin", acc.TraderLogin,
 				"isLive", acc.IsLive,
+				"broker", acc.BrokerName,
 			)
 			break
 		}
@@ -117,8 +120,13 @@ func (c *CTrader) Auth(ctx context.Context) (*provider.AuthResult, error) {
 	if err != nil {
 		return nil, fmt.Errorf("fetch account info: %w", err)
 	}
+	if traderInfo.BrokerName == "" {
+		traderInfo.BrokerName = accountBrokerName
+	}
 	if traderInfo.Balance == 0 {
-		return nil, fmt.Errorf("account balance is 0 — check your account or API credentials")
+		// Pepperstone demo server returns no balance in ProtoOATraderRes.
+		// We will get the real balance from the first close execution event.
+		slog.Warn("ProtoOATraderRes returned no balance — starting with 0, will update from execution events")
 	}
 
 	balance := traderInfo.Balance

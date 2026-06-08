@@ -40,7 +40,6 @@ func appendUint32(b []byte, field int, v uint32) []byte {
 	return appendVarint(b, uint64(v))
 }
 
-// --- ProtoMessage (outer envelope) ---
 
 func encodeEnvelope(payloadType uint32, inner []byte) []byte {
 	var b []byte
@@ -51,7 +50,6 @@ func encodeEnvelope(payloadType uint32, inner []byte) []byte {
 	return b
 }
 
-// --- Inner message encoders ---
 
 func encodeAppAuthReq(clientID, clientSecret string) []byte {
 	var b []byte
@@ -77,8 +75,6 @@ func encodeSubscribeSpotsReq(accountID, symbolID int64) []byte {
 	return b
 }
 
-// encodeClosePositionReq builds a ProtoOAClosePositionReq message.
-// positionID is the broker's numeric position ID; volume is in provider units.
 func encodeClosePositionReq(accountID, positionID, volume int64) []byte {
 	var b []byte
 	b = appendUint32(b, 1, ProtoOAClosePositionReq)
@@ -93,50 +89,38 @@ func encodeNewOrderReq(accountID, symbolID int64, side uint32, volume int64, sl,
 	b = appendUint32(b, 1, ProtoOANewOrderReq)
 	b = appendInt64(b, 2, accountID)
 	b = appendInt64(b, 3, symbolID)
-	b = appendUint32(b, 4, 1) // MARKET order
+	b = appendUint32(b, 4, 1) 
 	b = appendUint32(b, 5, side)
 	b = appendInt64(b, 6, volume)
 
-	// For MARKET orders, use relativeStopLoss/relativeTakeProfit in units of 1/100000
-	// sl and tp are in pips (0.0001 EUR), convert to 1/100000 units: pips * 10
 	if sl > 0 {
-		b = appendInt64(b, 19, int64(sl*10)) // relativeStopLoss
+		b = appendInt64(b, 19, int64(sl*10)) 
 	}
 	if tp > 0 {
-		b = appendInt64(b, 20, int64(tp*10)) // relativeTakeProfit
+		b = appendInt64(b, 20, int64(tp*10)) 
 	}
 	return b
 }
 
 
-// --- Decoder helpers ---
-
-// --- Result types ---
-
-// TraderInfo holds the fields we extract from ProtoOATraderRes.
-// depositCurrency is not decoded here — the proto exposes it as depositAssetId (int64),
-// which requires a separate ProtoOAAssetListReq lookup to resolve to a name like "USD".
 type TraderInfo struct {
 	AccountID     int64
-	Balance       float64 // real value in deposit currency
-	Leverage      float64 // e.g. 400.0 = 1:400 leverage
-	MaxLeverage   float64 // max allowed leverage for the account
-	AccountMode   string  // "hedged" | "netted" | "linked"
+	Balance       float64 
+	Leverage      float64 
+	MaxLeverage   float64 
+	AccountMode   string  
 	BrokerName    string
-	IsLimitedRisk bool // guaranteed stop-loss / limited risk account
-	FairStopOut   bool // proportional margin stop-out vs FIFO
+	IsLimitedRisk bool 
+	FairStopOut   bool 
 }
 
-// OpenPosition is a simplified position extracted from ProtoOAReconcileRes.
-// Used on startup to detect trades already open so the bot doesn't double-enter.
 type OpenPosition struct {
 	PositionID int64
 	SymbolID   int64
-	Side       uint32 // 1=BUY 2=SELL
+	Side       uint32 
 	Volume     int64
 }
 
-// --- Encoders for new request types ---
 
 func encodeTraderReq(accountID int64) []byte {
 	var b []byte
@@ -152,8 +136,7 @@ func encodeReconcileReq(accountID int64) []byte {
 	return b
 }
 
-// encodeSubscribeLiveTrendbarReq subscribes to real-time M5 trendbar events for a symbol.
-// period: use PeriodM5 (4) for 5-minute candles.
+
 func encodeSubscribeLiveTrendbarReq(accountID, symbolID int64, period uint32) []byte {
 	var b []byte
 	b = appendUint32(b, 1, ProtoOASubscribeLiveTrendbarReq)
@@ -163,8 +146,6 @@ func encodeSubscribeLiveTrendbarReq(accountID, symbolID int64, period uint32) []
 	return b
 }
 
-// encodeGetTrendbarsReq requests the last `count` completed bars before toTimestamp.
-// Actual proto fields: 2=ctidTraderAccountId, 3=fromTimestamp, 4=toTimestamp, 5=period, 6=symbolId, 7=count.
 func encodeGetTrendbarsReq(accountID, symbolID int64, period uint32, toMs int64, count uint32) []byte {
 	var b []byte
 	b = appendUint32(b, 1, ProtoOAGetTrendbarsReq)
@@ -176,12 +157,10 @@ func encodeGetTrendbarsReq(accountID, symbolID int64, period uint32, toMs int64,
 	return b
 }
 
-// --- Trendbar types and decoder ---
 
-// Trendbar is a completed OHLC candle from cTrader.
 type Trendbar struct {
-	OpenTime int64  // Unix seconds (utcTimestampInMinutes * 60)
-	Period   uint32 // 5=M5, 9=H1, 10=H4, 11=D1, etc.
+	OpenTime int64  
+	Period   uint32 
 	Open     float64
 	High     float64
 	Low      float64
@@ -189,13 +168,7 @@ type Trendbar struct {
 	Volume   int64
 }
 
-// decodeTrendbar parses a single ProtoOATrendbar message.
-// Actual proto field numbers (from OpenApiModelMessages.proto):
-//
-//	3=volume, 4=period, 5=low, 6=deltaOpen, 7=deltaClose, 8=deltaHigh, 9=utcTimestampInMinutes
-//
-// Delta encoding: low is absolute; open = low+deltaOpen, close = low+deltaClose, high = low+deltaHigh.
-// All price values are in 1/100000 units (divide by 100000.0).
+
 func decodeTrendbar(data []byte) (Trendbar, bool) {
 	const divisor = 100000.0
 	var (
@@ -217,31 +190,31 @@ func decodeTrendbar(data []byte) (Trendbar, bool) {
 		field := tag >> 3
 		wire := tag & 0x7
 		switch {
-		case field == 3 && wire == 0: // volume (int64)
+		case field == 3 && wire == 0: 
 			v, n2 := decodeVarint(data[i:])
 			i += n2
 			volume = v
-		case field == 4 && wire == 0: // period (enum)
+		case field == 4 && wire == 0: 
 			v, n2 := decodeVarint(data[i:])
 			i += n2
 			period = v
-		case field == 5 && wire == 0: // low (int64, always positive for prices)
+		case field == 5 && wire == 0: 
 			v, n2 := decodeVarint(data[i:])
 			i += n2
 			low = v
-		case field == 6 && wire == 0: // deltaOpen (uint64, offset above low)
+		case field == 6 && wire == 0: 
 			v, n2 := decodeVarint(data[i:])
 			i += n2
 			deltaOpen = v
-		case field == 7 && wire == 0: // deltaClose (uint64, offset above low)
+		case field == 7 && wire == 0: 
 			v, n2 := decodeVarint(data[i:])
 			i += n2
 			deltaClose = v
-		case field == 8 && wire == 0: // deltaHigh (uint64, offset above low)
+		case field == 8 && wire == 0: 
 			v, n2 := decodeVarint(data[i:])
 			i += n2
 			deltaHigh = v
-		case field == 9 && wire == 0: // utcTimestampInMinutes (uint32)
+		case field == 9 && wire == 0: 
 			v, n2 := decodeVarint(data[i:])
 			i += n2
 			tsMinutes = v
@@ -255,7 +228,7 @@ func decodeTrendbar(data []byte) (Trendbar, bool) {
 	lowF := float64(low) / divisor
 	return Trendbar{
 		OpenTime: int64(tsMinutes) * 60,
-		Period:   uint32(period), // 5=M5, 9=H1, 10=H4, 11=D1
+		Period:   uint32(period), 
 		Open:     lowF + float64(deltaOpen)/divisor,
 		High:     lowF + float64(deltaHigh)/divisor,
 		Low:      lowF,
@@ -265,8 +238,6 @@ func decodeTrendbar(data []byte) (Trendbar, bool) {
 }
 
 
-// decodeGetTrendbarsRes extracts the list of historical trendbars from a ProtoOAGetTrendbarsRes.
-// Field 5 is repeated ProtoOATrendbar (from actual OpenApiMessages.proto).
 func decodeGetTrendbarsRes(data []byte) []Trendbar {
 	var bars []Trendbar
 	i := 0
@@ -292,8 +263,7 @@ func decodeGetTrendbarsRes(data []byte) []Trendbar {
 	return bars
 }
 
-// decodeLiveTrendbarEvents extracts all trendbars from a ProtoOASpotEvent payload.
-// Field 6 of SpotEvent is repeated ProtoOATrendbar, one entry per subscribed period.
+
 func decodeLiveTrendbarEvents(data []byte) []Trendbar {
 	var bars []Trendbar
 	i := 0
@@ -305,7 +275,7 @@ func decodeLiveTrendbarEvents(data []byte) []Trendbar {
 		i += n
 		field := tag >> 3
 		wire := tag & 0x7
-		if field == 6 && wire == 2 { // repeated ProtoOATrendbar in SpotEvent
+		if field == 6 && wire == 2 { 
 			l, n2 := decodeVarint(data[i:])
 			i += n2
 			if bar, ok := decodeTrendbar(data[i : i+int(l)]); ok {
@@ -319,10 +289,7 @@ func decodeLiveTrendbarEvents(data []byte) []Trendbar {
 	return bars
 }
 
-// --- Decoders for new response types ---
 
-// decodeTraderRes extracts account info from a ProtoOATraderRes payload.
-// ProtoOATraderRes: field2=ctidTraderAccountId(int64), field3=ProtoOATrader(message).
 func decodeTraderRes(data []byte) (TraderInfo, bool) {
 	traderBytes := extractLenField(data, 3)
 	if traderBytes == nil {
@@ -331,7 +298,7 @@ func decodeTraderRes(data []byte) (TraderInfo, bool) {
 
 	var info TraderInfo
 	var rawBalance int64
-	var moneyDigits uint64 = 2 // default per spec; overridden by field 20 if present
+	var moneyDigits uint64 = 2 
 
 	i := 0
 	for i < len(traderBytes) {
@@ -343,23 +310,23 @@ func decodeTraderRes(data []byte) (TraderInfo, bool) {
 		field := tag >> 3
 		wire := tag & 0x7
 		switch {
-		case field == 1 && wire == 0: // ctidTraderAccountId (int64)
+		case field == 1 && wire == 0: 
 			v, n2 := decodeVarint(traderBytes[i:])
 			i += n2
 			info.AccountID = int64(v)
-		case field == 2 && wire == 0: // balance (int64)
+		case field == 2 && wire == 0: 
 			v, n2 := decodeVarint(traderBytes[i:])
 			i += n2
 			rawBalance = int64(v)
-		case field == 10 && wire == 0: // leverageInCents (uint32); 1:400 = 40000
+		case field == 10 && wire == 0: 
 			v, n2 := decodeVarint(traderBytes[i:])
 			i += n2
 			info.Leverage = float64(v) / 100.0
-		case field == 12 && wire == 0: // maxLeverage (uint32)
+		case field == 12 && wire == 0: 
 			v, n2 := decodeVarint(traderBytes[i:])
 			i += n2
 			info.MaxLeverage = float64(v)
-		case field == 15 && wire == 0: // accountType enum (0=HEDGED, 1=NETTED, 2=LINKED)
+		case field == 15 && wire == 0: 
 			v, n2 := decodeVarint(traderBytes[i:])
 			i += n2
 			switch v {
@@ -392,8 +359,6 @@ func decodeTraderRes(data []byte) (TraderInfo, bool) {
 		}
 	}
 
-	// Reject responses where nothing meaningful decoded — the server sent an
-	// empty or non-trader payload (e.g. only a clientMsgId echo).
 	if rawBalance == 0 && info.AccountID == 0 {
 		return TraderInfo{}, false
 	}
@@ -401,7 +366,6 @@ func decodeTraderRes(data []byte) (TraderInfo, bool) {
 	return info, true
 }
 
-// decodeReconcileRes extracts all open positions from a ProtoOAReconcileRes payload.
 func decodeReconcileRes(data []byte) []OpenPosition {
 	var positions []OpenPosition
 	i := 0
@@ -484,15 +448,11 @@ func decodeTradeData(data []byte, pos OpenPosition) OpenPosition {
 	return pos
 }
 
-// --- Shared decoder helpers ---
 
-// decodeZigzag64 converts a zigzag-encoded uint64 (used for proto sint64 fields) to int64.
-// zigzag: 0→0, 1→-1, 2→1, 3→-2, 4→2 ...
 func decodeZigzag64(v uint64) int64 {
 	return int64((v >> 1) ^ -(v & 1))
 }
 
-// extractLenField returns the bytes of the first length-delimited field matching targetField.
 func extractLenField(data []byte, targetField uint64) []byte {
 	i := 0
 	for i < len(data) {
@@ -513,7 +473,6 @@ func extractLenField(data []byte, targetField uint64) []byte {
 	return nil
 }
 
-// skipField advances past the value of a field with the given wire type.
 func skipField(data []byte, i int, wire uint64) int {
 	switch wire {
 	case 0:
@@ -531,8 +490,7 @@ func skipField(data []byte, i int, wire uint64) int {
 	}
 }
 
-// CloseDetail holds the fields from ProtoOAClosePositionDetail.
-// All money amounts are already divided by moneyDigits from the parent deal.
+
 type CloseDetail struct {
 	EntryPrice       float64
 	Swap             float64
@@ -543,7 +501,6 @@ type CloseDetail struct {
 	PnLConversionFee float64
 }
 
-// DealInfo holds the fields we extract from ProtoOADeal inside a ProtoOAExecutionEvent.
 type DealInfo struct {
 	DealID         int64
 	OrderID        int64
@@ -560,9 +517,7 @@ type DealInfo struct {
 	Close          CloseDetail // populated only when IsClose==true
 }
 
-// decodeFullExecutionEvent decodes a ProtoOAExecutionEvent payload.
-// Returns the execution type string and deal info (if the event carries one).
-// ProtoOAExecutionEvent fields: 2=deal, 3=executionType.
+
 func decodeFullExecutionEvent(data []byte) (execType string, deal DealInfo, hasDeal bool) {
 	i := 0
 	var rawDeal []byte
@@ -624,10 +579,6 @@ func execTypeString(v uint64) string {
 	}
 }
 
-// decodeDeal parses a ProtoOADeal message.
-// ProtoOADeal fields: 1=dealId, 2=orderId, 3=positionId, 4=volume, 5=filledVolume,
-// 7=createTimestamp(ms), 8=executionTimestamp(ms), 10=executionPrice(double),
-// 11=tradeSide, 12=dealStatus, 14=commission(sint64), 16=closePositionDetail, 17=moneyDigits.
 func decodeDeal(data []byte) DealInfo {
 	var d DealInfo
 	var rawCommission int64
@@ -713,11 +664,7 @@ func decodeDeal(data []byte) DealInfo {
 	return d
 }
 
-// decodeCloseDetail parses a ProtoOAClosePositionDetail message.
-// Fields (from OpenApiModelMessages.proto):
-// 1=entryPrice(double), 2=grossProfit(int64), 3=swap(int64),
-// 4=commission(int64), 5=balance(int64), 7=closedVolume(int64),
-// 10=pnlConversionFee(int64). All int64 fields are regular varint (not zigzag).
+
 func decodeCloseDetail(data []byte, scale float64) CloseDetail {
 	var c CloseDetail
 	var rawSwap, rawCommission, rawBalance, rawGrossProfit, rawClosedVolume, rawPnLFee int64
@@ -777,8 +724,7 @@ func decodeCloseDetail(data []byte, scale float64) CloseDetail {
 }
 
 
-// decodeOrderError decodes a ProtoOAOrderErrorEvent (2132) payload.
-// Fields: 2=errorCode(string), 3=orderId(int64), 7=description(string).
+
 func decodeOrderError(data []byte) (errorCode string, orderID int64, description string) {
 	i := 0
 	for i < len(data) {
@@ -811,8 +757,7 @@ func decodeOrderError(data []byte) (errorCode string, orderID int64, description
 	return
 }
 
-// decodeGenericError decodes a type-50 ProtoErrorRes payload.
-// Fields: 2=errorCode (uint32), 3=description (string).
+
 func decodeGenericError(data []byte) (code uint32, description string) {
 	i := 0
 	for i < len(data) {
@@ -840,8 +785,6 @@ func decodeGenericError(data []byte) (code uint32, description string) {
 	return
 }
 
-// decodeOAError decodes a ProtoOAErrorRes (2142) payload.
-// Fields: 2=ctidTraderAccountId(int64), 3=errorCode(string), 4=description(string).
 func decodeOAError(data []byte) (code, description string) {
 	i := 0
 	for i < len(data) {
@@ -870,10 +813,7 @@ func decodeOAError(data []byte) (code, description string) {
 	return
 }
 
-// --- Original decoders ---
 
-// decodeSpotEvent reads bid and ask from a raw spot event payload.
-// Returns (bid, ask, ok).
 func decodeSpotEvent(data []byte) (bid, ask uint64, ok bool) {
 	i := 0
 	for i < len(data) {
@@ -931,8 +871,6 @@ func encodeGetAccountListReq(accessToken string) []byte {
 	return b
 }
 
-// decodeAccountListRes decodes ProtoOAGetAccountListByAccessTokenRes.
-// Each ctidTraderAccount has: field1=ctidTraderAccountId (uint64), field2=isLive (bool), field3=traderLogin (uint64).
 func decodeAccountListRes(data []byte) []CtidAccount {
 	var accounts []CtidAccount
 	i := 0
@@ -981,6 +919,11 @@ func decodeCtidAccount(data []byte) CtidAccount {
 			v, n2 := decodeVarint(data[i:])
 			i += n2
 			acc.TraderLogin = int64(v)
+		case field == 6 && wire == 2: // brokerTitle (string)
+			l, n2 := decodeVarint(data[i:])
+			i += n2
+			acc.BrokerName = string(data[i : i+int(l)])
+			i += int(l)
 		default:
 			i = skipField(data, i, wire)
 		}
@@ -988,7 +931,6 @@ func decodeCtidAccount(data []byte) CtidAccount {
 	return acc
 }
 
-// payloadTypeOf extracts field 1 (payloadType) from a raw proto envelope.
 func payloadTypeOf(data []byte) uint32 {
 	i := 0
 	for i < len(data) {
@@ -1020,7 +962,6 @@ func payloadTypeOf(data []byte) uint32 {
 	return 0
 }
 
-// payloadOf extracts field 2 (inner payload bytes) from a raw proto envelope.
 func payloadOf(data []byte) []byte {
 	i := 0
 	for i < len(data) {
