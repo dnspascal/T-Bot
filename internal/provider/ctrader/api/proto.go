@@ -518,9 +518,10 @@ type DealInfo struct {
 }
 
 
-func decodeFullExecutionEvent(data []byte) (execType string, deal DealInfo, hasDeal bool) {
+func decodeFullExecutionEvent(data []byte) (execType string, deal DealInfo, hasDeal bool, closedPosID int64) {
 	i := 0
 	var rawDeal []byte
+	var rawPosition []byte
 	for i < len(data) {
 		tag, n := decodeVarint(data[i:])
 		if n == 0 {
@@ -534,7 +535,12 @@ func decodeFullExecutionEvent(data []byte) (execType string, deal DealInfo, hasD
 			v, n2 := decodeVarint(data[i:])
 			i += n2
 			execType = execTypeString(v)
-		case field == 6 && wire == 2: // deal (ProtoOADeal) is at field 6
+		case field == 4 && wire == 2: // position (ProtoOAPosition) — always present
+			l, n2 := decodeVarint(data[i:])
+			i += n2
+			rawPosition = data[i : i+int(l)]
+			i += int(l)
+		case field == 6 && wire == 2: // deal (ProtoOADeal) — optional, may be absent for broker-side closes
 			l, n2 := decodeVarint(data[i:])
 			i += n2
 			rawDeal = data[i : i+int(l)]
@@ -546,6 +552,41 @@ func decodeFullExecutionEvent(data []byte) (execType string, deal DealInfo, hasD
 	if rawDeal != nil {
 		deal = decodeDeal(rawDeal)
 		hasDeal = true
+	}
+	// When deal is absent (broker-side TP/SL close), read positionId+status from the position field.
+	if rawPosition != nil && !hasDeal {
+		posID, isClosed := decodePositionIDAndStatus(rawPosition)
+		if isClosed {
+			closedPosID = posID
+		}
+	}
+	return
+}
+
+// decodePositionIDAndStatus extracts positionId (field 1) and positionStatus (field 3) from a
+// ProtoOAPosition message. Returns (positionId, isClosed) where isClosed means status==CLOSED (2).
+func decodePositionIDAndStatus(data []byte) (positionID int64, isClosed bool) {
+	i := 0
+	for i < len(data) {
+		tag, n := decodeVarint(data[i:])
+		if n == 0 {
+			break
+		}
+		i += n
+		field := tag >> 3
+		wire := tag & 0x7
+		switch {
+		case field == 1 && wire == 0: // positionId
+			v, n2 := decodeVarint(data[i:])
+			i += n2
+			positionID = int64(v)
+		case field == 3 && wire == 0: // positionStatus: 1=OPEN, 2=CLOSED
+			v, n2 := decodeVarint(data[i:])
+			i += n2
+			isClosed = v == 2
+		default:
+			i = skipField(data, i, wire)
+		}
 	}
 	return
 }

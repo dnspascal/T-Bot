@@ -73,12 +73,13 @@ type PriceEvent struct {
 }
 
 type ExecutionEvent struct {
-	Type         string
-	OrderID      string
-	ProviderName string
-	Deal         *DealInfo
-	HasDeal      bool
-	Timestamp    time.Time
+	Type             string
+	OrderID          string
+	ProviderName     string
+	Deal             *DealInfo
+	HasDeal          bool
+	ClosedPositionID string // set when broker closed position without deal details (TP/SL hit server-side)
+	Timestamp        time.Time
 }
 
 type OrderEvent struct {

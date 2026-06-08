@@ -84,6 +84,10 @@ func countReversalSignals(ms indicator.MarketState, pos trackedPosition) (int, [
 }
 
 
+// minPeakGainForDrawback is the minimum profit a position must have reached (in price terms)
+// before the peak-drawback percentage is meaningful. Below this, MaxFavorable == spread noise.
+const minPeakGainForDrawback = 5 * pipSize // 5 pips
+
 func peakDrawbackPct(pos trackedPosition, currentPrice float64) float64 {
 	if pos.OpenPrice == 0 {
 		return 0
@@ -98,8 +102,8 @@ func peakDrawbackPct(pos trackedPosition, currentPrice float64) float64 {
 		currentGain = pos.OpenPrice - currentPrice
 	}
 
-	if peakGain <= 0 {
-		return 0 // never went in profit — other signals handle this case
+	if peakGain < minPeakGainForDrawback {
+		return 0 // never reached meaningful profit — noise from spread/entry tick
 	}
 
 	gaveBack := peakGain - currentGain

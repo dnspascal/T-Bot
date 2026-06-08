@@ -15,10 +15,11 @@ type PriceEvent struct {
 }
 
 type ExecutionEvent struct {
-	Type      string // ORDER_FILLED | ORDER_REJECTED | ORDER_CANCELLED | ...
-	Deal      DealInfo
-	HasDeal   bool
-	Timestamp time.Time
+	Type             string // ORDER_FILLED | ORDER_REJECTED | ORDER_CANCELLED | ...
+	Deal             DealInfo
+	HasDeal          bool
+	ClosedPositionID int64 // non-zero when broker closed position without deal (TP/SL hit)
+	Timestamp        time.Time
 }
 
 type CtidAccount struct {
@@ -257,16 +258,23 @@ func (c *Client) handleMessage(payloadType uint32, payload []byte) {
 		}
 
 	case ProtoOAExecutionEvent:
-		execType, deal, hasDeal := decodeFullExecutionEvent(payload)
+		execType, deal, hasDeal, closedPosID := decodeFullExecutionEvent(payload)
 		slog.Info("execution event received",
 			"type", execType,
 			"dealID", deal.DealID,
 			"positionID", deal.PositionID,
+			"closedPosID", closedPosID,
 			"executionPrice", deal.ExecutionPrice,
 			"isClose", deal.IsClose,
 		)
 		select {
-		case c.ExecutionCh <- ExecutionEvent{Type: execType, Deal: deal, HasDeal: hasDeal, Timestamp: time.Now().UTC()}:
+		case c.ExecutionCh <- ExecutionEvent{
+			Type:             execType,
+			Deal:             deal,
+			HasDeal:          hasDeal,
+			ClosedPositionID: closedPosID,
+			Timestamp:        time.Now().UTC(),
+		}:
 		default:
 		}
 

@@ -10,8 +10,8 @@ type Manager struct {
 	riskPercent      float64
 	maxDailyLossPct  float64 // percent of balance, e.g. 2.0 = 2%
 
-	dailyLoss float64
-	dayStart  time.Time
+	dailyPnL float64 // signed net: positive = profit, negative = loss
+	dayStart time.Time
 
 	unitsPerMicroLot    int64
 	minVolume           int64
@@ -75,29 +75,30 @@ func (m *Manager) dailyLimit(balance float64) float64 {
 	return balance * (m.maxDailyLossPct / 100)
 }
 
-func (m *Manager) RecordLoss(amount, balance float64) error {
+// RecordTrade adds the realized PnL of a closed trade to today's net.
+// Wins reduce the net loss; losses increase it.
+func (m *Manager) RecordTrade(realized float64) {
 	m.resetDayIfNeeded()
-	m.dailyLoss += amount
-	limit := m.dailyLimit(balance)
-	if m.dailyLoss >= limit {
-		return fmt.Errorf("daily loss limit reached: $%.2f of $%.2f (%.0f%% of balance)",
-			m.dailyLoss, limit, m.maxDailyLossPct)
-	}
-	return nil
+	m.dailyPnL += realized
 }
 
-func (m *Manager) RestoreLoss(amount float64) {
-	m.dailyLoss = amount
+// RestorePnL sets today's net PnL from the DB on startup (signed: positive = profit).
+func (m *Manager) RestorePnL(netPnL float64) {
+	m.dailyPnL = netPnL
 }
 
 func (m *Manager) CanTrade(balance float64) bool {
 	m.resetDayIfNeeded()
-	return m.dailyLoss < m.dailyLimit(balance)
+	return m.dailyPnL > -m.dailyLimit(balance)
 }
 
+// DailyLoss returns the magnitude of today's net loss (0 if day is net-positive).
 func (m *Manager) DailyLoss() float64 {
 	m.resetDayIfNeeded()
-	return m.dailyLoss
+	if m.dailyPnL >= 0 {
+		return 0
+	}
+	return -m.dailyPnL
 }
 
 func (m *Manager) MaxDailyLossPct() float64 {
@@ -106,7 +107,7 @@ func (m *Manager) MaxDailyLossPct() float64 {
 
 func (m *Manager) resetDayIfNeeded() {
 	if today().After(m.dayStart) {
-		m.dailyLoss = 0
+		m.dailyPnL = 0
 		m.dayStart = today()
 	}
 }

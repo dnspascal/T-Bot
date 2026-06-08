@@ -40,9 +40,7 @@ func initializeBot(ctx context.Context, cfg *config.Config, svc *Services, prov 
 		// anything smaller floors to qty=0 in the %.3f format used by PlaceMarketOrder.
 		riskMgr.SetVolumeConfig(100_000, 100_000, 5_000_000, 1e-7)
 	}
-	if todayLoss < 0 {
-		riskMgr.RestoreLoss(-todayLoss)
-	}
+	riskMgr.RestorePnL(todayLoss)
 
 	processorMgr := marketstate.NewProcessorManager(symbolUUID, prov.Name(), svc.Repos.MarketState)
 	if cfg.DevMode {

@@ -414,6 +414,9 @@ func (c *CTrader) ExecutionChan() <-chan provider.ExecutionEvent {
 				Timestamp:    event.Timestamp,
 				HasDeal:      event.HasDeal,
 			}
+			if event.ClosedPositionID != 0 {
+				execEvent.ClosedPositionID = fmt.Sprintf("%d", event.ClosedPositionID)
+			}
 			if event.HasDeal {
 				deal := event.Deal
 				execEvent.Deal = &provider.DealInfo{

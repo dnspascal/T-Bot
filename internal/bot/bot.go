@@ -180,12 +180,14 @@ func (b *Bot) reconcileOpenPositions(ctx context.Context) {
 	}
 
 	brokerOpen := make(map[string]bool)
+	reconcileOK := false
 	brokerPositions, err := b.provider.ReconcilePositions(ctx)
 	if err != nil {
 		slog.Warn("startup reconcile: could not fetch broker positions, trusting DB",
 			"provider", b.provider.Name(), "err", err,
 		)
 	} else {
+		reconcileOK = true
 		for _, bp := range brokerPositions {
 			brokerOpen[bp.PositionID] = true
 		}
@@ -200,7 +202,7 @@ func (b *Bot) reconcileOpenPositions(ctx context.Context) {
 			continue
 		}
 
-		if len(brokerOpen) > 0 && !brokerOpen[p.ProviderPositionID] {
+		if reconcileOK && !brokerOpen[p.ProviderPositionID] {
 			slog.Warn("startup reconcile: position closed at broker while bot was offline — purging",
 				"provider", b.provider.Name(), "posID", p.ProviderPositionID,
 			)
@@ -343,6 +345,55 @@ func (b *Bot) processClosedCandle(ctx context.Context, _ float64) {
 	b.onTradeSignal(ctx, result, b.currentPrice, signalID)
 }
 
+
+
+func (b *Bot) sameDirLosingPosition(side string) string {
+	mid := b.currentPrice.Mid
+	if mid == 0 {
+		mid = (b.currentPrice.Bid + b.currentPrice.Ask) / 2
+	}
+
+	var newest trackedPosition
+	found := false
+	for _, pos := range b.registry.All() {
+		if pos.Side != side || pos.OpenPrice == 0 {
+			continue
+		}
+		if !found || pos.OpenTime.After(newest.OpenTime) {
+			newest = pos
+			found = true
+		}
+	}
+	if !found {
+		return ""
+	}
+
+	var lossInPrice float64
+	if side == "BUY" {
+		lossInPrice = newest.OpenPrice - mid
+	} else {
+		lossInPrice = mid - newest.OpenPrice
+	}
+	if lossInPrice <= 0 {
+		return "" 
+	}
+
+	var slDist float64
+	if side == "BUY" {
+		slDist = newest.OpenPrice - newest.SLPrice
+	} else {
+		slDist = newest.SLPrice - newest.OpenPrice
+	}
+	if slDist <= 0 {
+		slDist = 5 * pipSize
+	}
+
+	if lossInPrice > slDist*0.4 {
+		return newest.ProviderPositionID
+	}
+	return ""
+}
+
 func (b *Bot) unrealizedUSD(priceDiff float64, volume int64) float64 {
 	if b.provider.Name() == "ctrader" {
 		return priceDiff * float64(volume) / 100
@@ -383,6 +434,11 @@ func (b *Bot) logUnrealizedPnL(currentPrice float64) {
 
 func (b *Bot) onExecution(ctx context.Context, exec provider.ExecutionEvent) {
 	if !exec.HasDeal {
+		// Broker-side TP/SL close: position field says CLOSED but no deal was sent.
+		if exec.Type == "ORDER_FILLED" && exec.ClosedPositionID != "" {
+			b.recordBrokerClose(ctx, exec)
+			return
+		}
 		switch exec.Type {
 		case "ORDER_REJECTED", "ORDER_CANCELLED", "ORDER_EXPIRED":
 			b.pendingOrder = false
@@ -430,6 +486,14 @@ func (b *Bot) onTradeSignal(ctx context.Context, result EntryResult, price provi
 
 	if ok, reason := b.registry.CanOpen(result.Tier, result.Signal); !ok {
 		slog.Info("signal skipped — position limit", "reason", reason)
+		return
+	}
+
+	if blockingPosID := b.sameDirLosingPosition(result.Signal); blockingPosID != "" {
+		slog.Info("signal skipped — same-direction position already in loss, not adding to loser",
+			"side", result.Signal,
+			"blockingPosID", blockingPosID,
+		)
 		return
 	}
 
@@ -706,9 +770,7 @@ func (b *Bot) recordCloseFill(ctx context.Context, exec provider.ExecutionEvent)
 		slog.Error("pnls.Upsert failed", "err", err)
 	}
 
-	if realized < 0 {
-		b.riskMgr.RecordLoss(-realized, b.getBalance())
-	}
+	b.riskMgr.RecordTrade(realized)
 
 	slog.Info("position closed",
 		"posID", provPosID,
@@ -719,6 +781,85 @@ func (b *Bot) recordCloseFill(ctx context.Context, exec provider.ExecutionEvent)
 		"deal_id":      deal.DealID,
 		"gross_profit": cl.GrossProfit,
 		"balance":      cl.Balance,
+	}, 0)
+}
+
+// recordBrokerClose handles a position closed server-side (TP/SL hit) where Pepperstone's demo
+// server sends the execution event without a deal payload. Financials are estimated from the
+// current mid price and the tracked position's open price.
+func (b *Bot) recordBrokerClose(ctx context.Context, exec provider.ExecutionEvent) {
+	posID := exec.ClosedPositionID
+
+	tracked, hasTracked := b.registry.Get(posID)
+	b.registry.Remove(posID)
+
+	var closeReason string
+	if reason, ok := b.pendingCloseReasons[posID]; ok {
+		closeReason = reason
+		delete(b.pendingCloseReasons, posID)
+	}
+
+	if err := b.positions.Close(ctx, b.provider.Name(), posID, exec.Timestamp, nil, nil); err != nil {
+		slog.Error("recordBrokerClose: positions.Close failed", "posID", posID, "err", err)
+	}
+
+	mid := b.currentPrice.Mid
+	if mid == 0 {
+		mid = (b.currentPrice.Bid + b.currentPrice.Ask) / 2
+	}
+
+	var estimatedPnL float64
+	closeSide := "SELL"
+	if hasTracked {
+		if tracked.Side == "BUY" {
+			estimatedPnL = b.unrealizedUSD(mid-tracked.OpenPrice, tracked.Volume)
+			closeSide = "SELL"
+		} else {
+			estimatedPnL = b.unrealizedUSD(tracked.OpenPrice-mid, tracked.Volume)
+			closeSide = "BUY"
+		}
+		if closeReason == "" {
+			closeReason = inferCloseReason(estimatedPnL)
+		}
+	}
+
+	fillID := fmt.Sprintf("broker_%s_%d", posID, exec.Timestamp.UnixMilli())
+	if err := b.fills.Insert(ctx, fill.Fill{
+		Provider:           b.provider.Name(),
+		ProviderFillID:     fillID,
+		ProviderPositionID: &posID,
+		SymbolID:           b.symbolUUID,
+		Side:               closeSide,
+		ExecutionPrice:     &mid,
+		EventType:          "close",
+		CloseReason:        &closeReason,
+		GrossProfit:        &estimatedPnL,
+		ReceivedAt:         exec.Timestamp,
+	}); err != nil {
+		slog.Error("recordBrokerClose: fills.Insert failed", "posID", posID, "err", err)
+	}
+
+	isWin := estimatedPnL > 0
+	if err := b.pnls.Upsert(ctx, b.symbolUUID, estimatedPnL, estimatedPnL, 0, 0, isWin, 0, 0); err != nil {
+		slog.Error("recordBrokerClose: pnls.Upsert failed", "posID", posID, "err", err)
+	}
+
+	b.riskMgr.RecordTrade(estimatedPnL)
+
+	go b.refreshBalance()
+
+	slog.Warn("broker closed position without deal — financials estimated from current price",
+		"posID", posID,
+		"closeSide", closeSide,
+		"execPrice", mid,
+		"estimatedPnL", fmt.Sprintf("%.2f", estimatedPnL),
+		"closeReason", closeReason,
+	)
+	b.events.Insert(ctx, "broker_close_no_deal", map[string]any{
+		"position_id":   posID,
+		"estimated_pnl": estimatedPnL,
+		"close_reason":  closeReason,
+		"exec_price":    mid,
 	}, 0)
 }
 
