@@ -10,7 +10,7 @@ import (
 	"github.com/denismgaya/t-bot/internal/indicator"
 )
 
-const peakDrawbackThreshold = 40.0
+const peakDrawbackThreshold = 60.0
 
 const signalsToClose = 3
 
@@ -84,13 +84,20 @@ func countReversalSignals(ms indicator.MarketState, pos trackedPosition) (int, [
 }
 
 
-// minPeakGainForDrawback is the minimum profit a position must have reached (in price terms)
-// before the peak-drawback percentage is meaningful. Below this, MaxFavorable == spread noise.
-const minPeakGainForDrawback = 5 * pipSize // 5 pips
-
 func peakDrawbackPct(pos trackedPosition, currentPrice float64) float64 {
 	if pos.OpenPrice == 0 {
 		return 0
+	}
+
+	var tpDist float64
+	if pos.Side == "BUY" {
+		tpDist = pos.TPPrice - pos.OpenPrice
+	} else {
+		tpDist = pos.OpenPrice - pos.TPPrice
+	}
+	minPeakGain := tpDist * 0.33
+	if minPeakGain <= 0 {
+		minPeakGain = 3 * pipSize 
 	}
 
 	var peakGain, currentGain float64
@@ -102,13 +109,13 @@ func peakDrawbackPct(pos trackedPosition, currentPrice float64) float64 {
 		currentGain = pos.OpenPrice - currentPrice
 	}
 
-	if peakGain < minPeakGainForDrawback {
-		return 0 // never reached meaningful profit — noise from spread/entry tick
+	if peakGain < minPeakGain {
+		return 0 
 	}
 
 	gaveBack := peakGain - currentGain
 	if gaveBack <= 0 {
-		return 0 // still at or above peak
+		return 0 
 	}
 
 	return (gaveBack / peakGain) * 100

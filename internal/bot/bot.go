@@ -434,7 +434,6 @@ func (b *Bot) logUnrealizedPnL(currentPrice float64) {
 
 func (b *Bot) onExecution(ctx context.Context, exec provider.ExecutionEvent) {
 	if !exec.HasDeal {
-		// Broker-side TP/SL close: position field says CLOSED but no deal was sent.
 		if exec.Type == "ORDER_FILLED" && exec.ClosedPositionID != "" {
 			b.recordBrokerClose(ctx, exec)
 			return
