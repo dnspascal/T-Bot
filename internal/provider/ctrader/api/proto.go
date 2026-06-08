@@ -402,11 +402,11 @@ func decodeOAPosition(data []byte) OpenPosition {
 		field := tag >> 3
 		wire := tag & 0x7
 		switch {
-		case field == 1 && wire == 0: // positionId (int64)
+		case field == 1 && wire == 0: 
 			v, n2 := decodeVarint(data[i:])
 			i += n2
 			pos.PositionID = int64(v)
-		case field == 2 && wire == 2: // tradeData (embedded ProtoOATradeData)
+		case field == 2 && wire == 2: 
 			l, n2 := decodeVarint(data[i:])
 			i += n2
 			pos = decodeTradeData(data[i:i+int(l)], pos)
@@ -429,15 +429,15 @@ func decodeTradeData(data []byte, pos OpenPosition) OpenPosition {
 		field := tag >> 3
 		wire := tag & 0x7
 		switch {
-		case field == 1 && wire == 0: // symbolId (int64)
+		case field == 1 && wire == 0: 
 			v, n2 := decodeVarint(data[i:])
 			i += n2
 			pos.SymbolID = int64(v)
-		case field == 2 && wire == 0: // volume (int64)
+		case field == 2 && wire == 0: 
 			v, n2 := decodeVarint(data[i:])
 			i += n2
 			pos.Volume = int64(v)
-		case field == 3 && wire == 0: // tradeSide (enum: 1=BUY 2=SELL)
+		case field == 3 && wire == 0: 
 			v, n2 := decodeVarint(data[i:])
 			i += n2
 			pos.Side = uint32(v)
@@ -496,7 +496,7 @@ type CloseDetail struct {
 	Swap             float64
 	Commission       float64
 	GrossProfit      float64
-	Balance          float64 // account balance after close
+	Balance          float64 
 	ClosedVolume     int64
 	PnLConversionFee float64
 }
@@ -508,13 +508,13 @@ type DealInfo struct {
 	Volume         int64
 	FilledVolume   int64
 	ExecutionPrice float64
-	TradeSide      uint32 // 1=BUY 2=SELL
+	TradeSide      uint32 
 	DealStatus     uint32
 	Commission     float64
 	CreateTime     time.Time
 	ExecTime       time.Time
-	IsClose        bool        // true when closePositionDetail is present
-	Close          CloseDetail // populated only when IsClose==true
+	IsClose        bool        
+	Close          CloseDetail 
 }
 
 
