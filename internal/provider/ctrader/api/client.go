@@ -222,11 +222,9 @@ func (c *Client) handleMessage(payloadType uint32, payload []byte) {
 		}
 
 	case ProtoOASubscribeLiveTrendbarRes:
-		slog.Info("live trendbar subscription confirmed")
 
 	case ProtoOAGetTrendbarsRes:
 		bars := decodeGetTrendbarsRes(payload)
-		slog.Info("historical trendbars received", "count", len(bars))
 		select {
 		case c.trendbarsResCh <- bars:
 		default:
@@ -253,7 +251,6 @@ func (c *Client) handleMessage(payloadType uint32, payload []byte) {
 
 	case ProtoOAReconcileRes:
 		positions := decodeReconcileRes(payload)
-		slog.Info("reconcile received", "openPositions", len(positions))
 		select {
 		case c.reconcileResCh <- positions:
 		default:
@@ -283,14 +280,12 @@ func (c *Client) handleMessage(payloadType uint32, payload []byte) {
 
 	case ProtoOAGetAccountListByAccessTokenRes:
 		accounts := decodeAccountListRes(payload)
-		slog.Info("account list received", "count", len(accounts))
 		select {
 		case c.accountListCh <- accounts:
 		default:
 		}
 
 	case ProtoOASubscribeSpotsRes:
-		slog.Info("spot subscription confirmed")
 
 	case ProtoOAErrorRes:
 		code, desc := decodeOAError(payload)

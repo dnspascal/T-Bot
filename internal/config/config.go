@@ -9,13 +9,14 @@ import (
 )
 
 type CTraderConfig struct {
-	ClientID     string
-	ClientSecret string
-	AccessToken  string
-	RefreshToken string
-	AccountID    int64
-	SymbolID     int64
-	Demo         bool
+	ClientID        string
+	ClientSecret    string
+	AccessToken     string
+	RefreshToken    string
+	AccountID       int64
+	SymbolID        int64
+	Demo            bool
+	InitialBalance  float64
 }
 
 type BinanceConfig struct {
@@ -40,7 +41,6 @@ type Config struct {
 
 	Period string
 
-	
 	DevMode bool
 
 	SendTestPosition bool
@@ -61,14 +61,20 @@ func Load() (*Config, error) {
 			return nil, fmt.Errorf("CTRADER_SYMBOL_ID must be a number: %w", err)
 		}
 
+		ctraderInitialBalance, err := strconv.ParseFloat(getEnv("CTRADER_INITIAL_BALANCE", "0"), 64)
+		if err != nil {
+			return nil, fmt.Errorf("CTRADER_INITIAL_BALANCE must be a number: %w", err)
+		}
+
 		ctraderCfg = &CTraderConfig{
-			ClientID:     mustEnv("CTRADER_CLIENT_ID"),
-			ClientSecret: mustEnv("CTRADER_CLIENT_SECRET"),
-			AccessToken:  mustEnv("CTRADER_ACCESS_TOKEN"),
-			RefreshToken: getEnv("CTRADER_REFRESH_TOKEN", ""),
-			AccountID:    accountID,
-			SymbolID:     symbolID,
-			Demo:         getEnv("CTRADER_DEMO", "true") == "true",
+			ClientID:       mustEnv("CTRADER_CLIENT_ID"),
+			ClientSecret:   mustEnv("CTRADER_CLIENT_SECRET"),
+			AccessToken:    mustEnv("CTRADER_ACCESS_TOKEN"),
+			RefreshToken:   getEnv("CTRADER_REFRESH_TOKEN", ""),
+			AccountID:      accountID,
+			SymbolID:       symbolID,
+			Demo:           getEnv("CTRADER_DEMO", "true") == "true",
+			InitialBalance: ctraderInitialBalance,
 		}
 	}
 

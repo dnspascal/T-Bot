@@ -127,7 +127,6 @@ func New(
 
 func (b *Bot) Run(ctx context.Context, startedAt time.Time) {
 	b.reconcileOpenPositions(ctx)
-	b.logDBDiag(ctx)
 
 	go b.tokenRefresher(ctx)
 	go b.tickWriter(ctx)
@@ -622,6 +621,7 @@ func (b *Bot) recordOpenFill(ctx context.Context, exec provider.ExecutionEvent) 
 		"posID", provPosID, "side", b.pendingSide,
 		"price", deal.ExecutionPrice, "tier", b.pendingTier,
 	)
+	
 	b.events.Insert(ctx, "position_opened", map[string]any{
 		"deal_id":     deal.DealID,
 		"position_id": provPosID,
@@ -769,41 +769,6 @@ func (b *Bot) tickWriter(ctx context.Context) {
 			if err != nil {
 				slog.Error("tick insert failed", "err", err)
 			}
-		}
-	}
-}
-
-func (b *Bot) logDBDiag(ctx context.Context) {
-	var searchPath string
-	_ = b.db.QueryRow(ctx, "SHOW search_path").Scan(&searchPath)
-
-	var candleCount, tickCount int
-	_ = b.db.QueryRow(ctx, "SELECT COUNT(*) FROM candles").Scan(&candleCount)
-	_ = b.db.QueryRow(ctx, "SELECT COUNT(*) FROM price_ticks").Scan(&tickCount)
-
-	slog.Info("db diag",
-		"search_path", searchPath,
-		"candles", candleCount,
-		"price_ticks", tickCount,
-		"symbol_uuid", b.symbolUUID,
-	)
-
-	if tickCount == 0 {
-		
-		slog.Info("pre-warming price_ticks chunk")
-		warmCtx, warmCancel := context.WithTimeout(ctx, 90*time.Second)
-		_, warmErr := b.db.Exec(warmCtx,
-			`INSERT INTO price_ticks (symbol_id, bid, ask, received_at, processing_us)
-			 VALUES ($1, 0.0, 0.0, NOW(), -1)`,
-			b.symbolUUID)
-		warmCancel()
-		if warmErr != nil {
-			slog.Warn("price_ticks chunk pre-warm failed", "err", warmErr)
-		} else {
-			cleanCtx, cleanCancel := context.WithTimeout(ctx, 15*time.Second)
-			b.db.Exec(cleanCtx, `DELETE FROM price_ticks WHERE processing_us = -1`)
-			cleanCancel()
-			slog.Info("price_ticks chunk ready")
 		}
 	}
 }

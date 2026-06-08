@@ -123,13 +123,11 @@ func (c *CTrader) Auth(ctx context.Context) (*provider.AuthResult, error) {
 	if traderInfo.BrokerName == "" {
 		traderInfo.BrokerName = accountBrokerName
 	}
-	if traderInfo.Balance == 0 {
-		// Pepperstone demo server returns no balance in ProtoOATraderRes.
-		// We will get the real balance from the first close execution event.
-		slog.Warn("ProtoOATraderRes returned no balance — starting with 0, will update from execution events")
-	}
-
 	balance := traderInfo.Balance
+	if balance <= 0 && c.ctCfg.InitialBalance > 0 {
+		balance = c.ctCfg.InitialBalance
+		slog.Info("ProtoOATraderRes returned no balance — using CTRADER_INITIAL_BALANCE", "balance", balance)
+	}
 	leverage := traderInfo.Leverage
 	maxLeverage := traderInfo.MaxLeverage
 	accountMode := traderInfo.AccountMode
