@@ -82,6 +82,14 @@ func (c *CTrader) Auth(ctx context.Context) (*provider.AuthResult, error) {
 		if rfErr := c.RefreshCredentials(ctx); rfErr != nil {
 			return nil, fmt.Errorf("get account list: %w (refresh also failed: %v)", err, rfErr)
 		}
+		// Reconnect TCP — connection may have dropped during the OAuth wait.
+		if err := c.client.Connect(); err != nil {
+			return nil, fmt.Errorf("reconnect after token refresh: %w", err)
+		}
+		if err := c.client.AuthApp(c.ctCfg.ClientID, c.ctCfg.ClientSecret); err != nil {
+			return nil, fmt.Errorf("re-auth app after token refresh: %w", err)
+		}
+		time.Sleep(2 * time.Second)
 		accounts, err = c.client.GetAccountList(c.ctCfg.AccessToken)
 		if err != nil {
 			return nil, fmt.Errorf("get account list after refresh: %w", err)

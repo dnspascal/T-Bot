@@ -20,8 +20,7 @@ func InitiateOAuthFlow(clientID, clientSecret, redirectURI string, callbackPort 
 	mux.HandleFunc("/callback", func(w http.ResponseWriter, r *http.Request) {
 		code := r.URL.Query().Get("code")
 		if code == "" {
-			errCh <- fmt.Errorf("callback received no code parameter")
-			http.Error(w, "no code", http.StatusBadRequest)
+			http.Error(w, "No authorization code — open the authorization URL from the bot logs, not this URL directly.", http.StatusBadRequest)
 			return
 		}
 		fmt.Fprintln(w, "Authorization successful — you can close this tab. The bot will continue.")
