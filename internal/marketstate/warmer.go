@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"time"
 
 	"github.com/denismgaya/t-bot/internal/config"
 	"github.com/denismgaya/t-bot/internal/provider"
@@ -26,7 +27,10 @@ func NewWarmer(prov provider.Provider, processorMgr *ProcessorManager, historica
 }
 
 func (w *Warmer) WarmupAllTimeframes(ctx context.Context, symbol string) error {
-	for _, period := range config.TradingPeriods {
+	for i, period := range config.TradingPeriods {
+		if i > 0 {
+			time.Sleep(2 * time.Second)
+		}
 		if err := w.warmupTimeframe(ctx, symbol, period); err != nil {
 			return fmt.Errorf("warmup %s: %w", period, err)
 		}
