@@ -445,7 +445,7 @@ func (b *Bot) processClosedCandle(ctx context.Context, _ float64) {
 	b.watchPositions(ctx, m5)
 
 	evalStart := time.Now()
-	result := evaluateEntry(states, mid)
+	result := evaluateEntry(states, mid, b.cfg.LondonNYOnly)
 
 	if b.forceTestOrder && result.Signal == "HOLD" {
 		slog.Warn("FORCE_TEST_ORDER: overriding HOLD with BUY for pipeline test")

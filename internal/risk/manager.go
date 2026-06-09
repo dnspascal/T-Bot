@@ -46,8 +46,8 @@ var dsmLocation, _ = time.LoadLocation("Africa/Dar_es_Salaam")
 
 
 func (m *Manager) PositionSize(balance, stopLossPips float64) (int64, error) {
-	if stopLossPips < 5 {
-		return 0, fmt.Errorf("stop loss too tight: %.1f pips (minimum 5)", stopLossPips)
+	if stopLossPips < 3 {
+		return 0, fmt.Errorf("stop loss too tight: %.1f pips (minimum 3)", stopLossPips)
 	}
 
 	riskAmount := balance * (m.riskPercent / 100)

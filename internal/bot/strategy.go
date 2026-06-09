@@ -50,12 +50,40 @@ type rangeConfirmation struct {
 	bonusTFs            int 
 }
 
-func inActiveSession() bool {
-	h := time.Now().UTC().Hour()
-	return h >= 7 && h < 21
+type fxSession int
+
+const (
+	sessionDead    fxSession = iota // 22:00–22:59 UTC: true gap between NY close and Sydney ramp
+	sessionTokyo                    // 23:00–06:59 UTC: Sydney/Tokyo
+	sessionLondon                   // 07:00–12:59 UTC: London only
+	sessionLondonNY                 // 13:00–15:59 UTC: peak overlap
+	sessionNewYork                  // 16:00–21:59 UTC: NY only (full window)
+)
+
+func classifySession(h int) fxSession {
+	switch {
+	case h == 22:
+		return sessionDead
+	case h >= 13 && h < 16:
+		return sessionLondonNY
+	case h >= 7 && h < 13:
+		return sessionLondon
+	case h >= 16 && h < 22:
+		return sessionNewYork // 16:00–21:59 UTC
+	default: // 23:00–06:59
+		return sessionTokyo
+	}
 }
 
-func evaluateEntry(states map[string]indicator.MarketState, currentPrice float64) EntryResult {
+func inActiveSession(londonNYOnly bool) bool {
+	s := classifySession(time.Now().UTC().Hour())
+	if londonNYOnly {
+		return s == sessionLondon || s == sessionLondonNY || s == sessionNewYork
+	}
+	return s != sessionDead
+}
+
+func evaluateEntry(states map[string]indicator.MarketState, currentPrice float64, londonNYOnly bool) EntryResult {
 	hold := func(reason string) EntryResult {
 		return EntryResult{Signal: "HOLD", Reason: reason}
 	}
@@ -64,7 +92,7 @@ func evaluateEntry(states map[string]indicator.MarketState, currentPrice float64
 	if !ok || !m5.IsWarmedUp {
 		return hold("M5 not warmed up")
 	}
-	if !inActiveSession() {
+	if !inActiveSession(londonNYOnly) {
 		return hold("outside active session")
 	}
 
@@ -76,6 +104,12 @@ func evaluateEntry(states map[string]indicator.MarketState, currentPrice float64
 	case m5.Regime == "trending_up" && m5.RSI > rsiMidline:
 		direction = "BUY"
 	case m5.Regime == "trending_down" && m5.RSI < rsiMidline:
+		direction = "SELL"
+
+	// Breakout: price broke the 20-bar range. Trade in the direction confirmed by EMA + RSI.
+	case m5.Regime == "breakout" && m5.EMAFast > m5.EMASlow && m5.RSI > rsiMidline:
+		direction = "BUY"
+	case m5.Regime == "breakout" && m5.EMAFast < m5.EMASlow && m5.RSI < rsiMidline:
 		direction = "SELL"
 
 	case m5.Regime == "ranging":
@@ -139,7 +173,7 @@ func evaluateEntry(states map[string]indicator.MarketState, currentPrice float64
 	}
 
 	slPips, tpPips := pricesToPips(direction, currentPrice, slPrice, tpPrice)
-	if slPips < 5 || tpPips < 5 {
+	if slPips < 3 || tpPips < 3 {
 		return hold("SL/TP too tight in pips")
 	}
 	if tpPips/slPips < minRR {
