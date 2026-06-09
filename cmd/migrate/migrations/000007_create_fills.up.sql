@@ -9,8 +9,7 @@ CREATE TABLE fills (
     provider_fill_id     TEXT          NOT NULL,   -- provider's own fill/deal identifier
     provider_order_id    TEXT,                     -- provider's own order identifier
     provider_position_id TEXT,                     -- provider's own position identifier
-    symbol_id            BIGINT        NOT NULL,
-    symbol               TEXT          NOT NULL,
+    symbol_id            UUID          NOT NULL REFERENCES symbols(id),
     side                 TEXT          NOT NULL CHECK (side IN ('BUY', 'SELL')),
 
     -- Fill details
@@ -27,6 +26,7 @@ CREATE TABLE fills (
 
     -- Close position detail (populated only when this fill CLOSES a position)
     close_entry_price    NUMERIC(12,5), -- what the original entry price was
+    close_reason         TEXT,          -- why this position closed: tp_hit, sl_hit, manual, timeout, regime_change
     gross_profit         NUMERIC(18,4), -- raw profit before swap/commission
     close_swap           NUMERIC(18,4), -- accumulated swap on this closed volume
     close_commission     NUMERIC(18,4), -- accumulated commission on this closed volume
@@ -57,5 +57,5 @@ CREATE TABLE fills (
 CREATE INDEX idx_fills_our_order_id    ON fills (our_order_id);
 CREATE INDEX idx_fills_our_position_id ON fills (our_position_id);
 CREATE INDEX idx_fills_provider_pos    ON fills (provider, provider_position_id);
-CREATE INDEX idx_fills_symbol          ON fills (symbol, received_at DESC);
+CREATE INDEX idx_fills_symbol          ON fills (symbol_id, received_at DESC);
 CREATE INDEX idx_fills_event_type      ON fills (event_type, received_at DESC);

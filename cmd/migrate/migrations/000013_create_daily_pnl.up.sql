@@ -3,7 +3,7 @@
 CREATE TABLE daily_pnl (
     id                  UUID          PRIMARY KEY DEFAULT gen_random_uuid(),
     date                DATE          NOT NULL,
-    symbol              TEXT          NOT NULL DEFAULT 'EURUSD',
+    symbol_id           UUID          NOT NULL REFERENCES symbols(id),
 
     -- P&L breakdown (real currency amounts in deposit currency)
     realized_pnl        NUMERIC(18,4) NOT NULL DEFAULT 0, -- net after commission and swap
@@ -22,7 +22,7 @@ CREATE TABLE daily_pnl (
 
     updated_at          TIMESTAMPTZ   NOT NULL DEFAULT NOW(),
 
-    UNIQUE (date, symbol)
+    UNIQUE (date, symbol_id)
 );
 
 CREATE INDEX idx_daily_pnl_date ON daily_pnl (date DESC);

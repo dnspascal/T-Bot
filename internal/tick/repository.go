@@ -18,12 +18,12 @@ func New(db *pgxpool.Pool) *Repository {
 func (r *Repository) Insert(ctx context.Context, t Tick) error {
 	const q = `
 		INSERT INTO price_ticks
-			(symbol, symbol_id, bid, ask, session_close, provider_timestamp, received_at, processing_ms)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`
+			(symbol_id, bid, ask, session_close, provider_timestamp, received_at, processing_us)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)`
 	_, err := r.db.Exec(ctx, q,
-		t.Symbol, t.SymbolID, t.Bid, t.Ask,
+		t.SymbolID, t.Bid, t.Ask,
 		t.SessionClose, t.ProviderTimestamp,
-		t.ReceivedAt, t.ProcessingMs,
+		t.ReceivedAt, t.ProcessingUS,
 	)
 	if err != nil {
 		return fmt.Errorf("tick.Insert: %w", err)
@@ -31,15 +31,15 @@ func (r *Repository) Insert(ctx context.Context, t Tick) error {
 	return nil
 }
 
-func (r *Repository) Recent(ctx context.Context, symbol string, n int) ([]Tick, error) {
+func (r *Repository) Recent(ctx context.Context, symbolID string, n int) ([]Tick, error) {
 	const q = `
-		SELECT id, symbol, symbol_id, bid, ask, mid, spread,
-		       session_close, provider_timestamp, received_at, processing_ms
+		SELECT id, symbol_id, bid, ask, mid, spread,
+		       session_close, provider_timestamp, received_at, processing_us
 		FROM price_ticks
-		WHERE symbol = $1
+		WHERE symbol_id = $1
 		ORDER BY received_at DESC
 		LIMIT $2`
-	rows, err := r.db.Query(ctx, q, symbol, n)
+	rows, err := r.db.Query(ctx, q, symbolID, n)
 	if err != nil {
 		return nil, fmt.Errorf("tick.Recent: %w", err)
 	}
@@ -49,8 +49,8 @@ func (r *Repository) Recent(ctx context.Context, symbol string, n int) ([]Tick, 
 	for rows.Next() {
 		var t Tick
 		if err := rows.Scan(
-			&t.ID, &t.Symbol, &t.SymbolID, &t.Bid, &t.Ask, &t.Mid, &t.Spread,
-			&t.SessionClose, &t.ProviderTimestamp, &t.ReceivedAt, &t.ProcessingMs,
+			&t.ID, &t.SymbolID, &t.Bid, &t.Ask, &t.Mid, &t.Spread,
+			&t.SessionClose, &t.ProviderTimestamp, &t.ReceivedAt, &t.ProcessingUS,
 		); err != nil {
 			return nil, fmt.Errorf("tick.Recent scan: %w", err)
 		}

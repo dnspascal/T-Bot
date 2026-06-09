@@ -5,221 +5,202 @@ import (
 	"fmt"
 	"log"
 	"log/slog"
-	"os"
-	ossignal "os/signal"
-	"syscall"
+	"sync"
 	"time"
 
-	"github.com/denismgaya/t-bot/internal/api"
-	"github.com/denismgaya/t-bot/internal/bot"
-	"github.com/denismgaya/t-bot/internal/candle"
+	"github.com/denismgaya/t-bot/internal/provider/ctrader/api"
 	"github.com/denismgaya/t-bot/internal/config"
-	"github.com/denismgaya/t-bot/internal/database"
-	"github.com/denismgaya/t-bot/internal/event"
-	"github.com/denismgaya/t-bot/internal/fill"
-	"github.com/denismgaya/t-bot/internal/order"
-	"github.com/denismgaya/t-bot/internal/pnl"
-	"github.com/denismgaya/t-bot/internal/position"
-	"github.com/denismgaya/t-bot/internal/risk"
-	"github.com/denismgaya/t-bot/internal/signal"
-	"github.com/denismgaya/t-bot/internal/snapshot"
-	"github.com/denismgaya/t-bot/internal/strategy"
-	"github.com/denismgaya/t-bot/internal/tick"
+	"github.com/denismgaya/t-bot/internal/marketstate"
+	"github.com/denismgaya/t-bot/internal/provider"
+	"github.com/denismgaya/t-bot/internal/provider/binance"
+	"github.com/denismgaya/t-bot/internal/provider/ctrader"
 )
 
 func main() {
-	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
-		Level: slog.LevelInfo,
-	})))
+
+	setupLogging()
 
 	cfg, err := config.Load()
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	ctx, cancel := ossignal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	ctx, cancel := setupGracefulShutdown()
 	defer cancel()
 
-	pool, err := database.New(ctx, cfg.DatabaseURL, 10, 2)
+	svc, err := initServices(ctx, cfg)
 	if err != nil {
-		log.Fatal("database:", err)
+		log.Fatal("init services:", err)
 	}
-	defer pool.Close()
-
-	ticks     := tick.New(pool)
-	candles   := candle.New(pool)
-	signals   := signal.New(pool)
-	orders    := order.New(pool)
-	fills     := fill.New(pool)
-	positions := position.New(pool)
-	pnls      := pnl.New(pool)
-	events    := event.New(pool)
-	snapshots := snapshot.New(pool)
+	defer svc.DB.Close()
 
 	botStart := time.Now()
 
-	
-	events.Insert(ctx, "started", map[string]any{
-		"symbol": cfg.Symbol,
-		"mode":   cfg.Mode(),
+	svc.Repos.Events.Insert(ctx, "started", map[string]any{
+		"enableCTrader": cfg.EnableCTrader,
+		"enableBinance": cfg.EnableBinance,
 	}, 0)
 
-	// Restore daily P&L so risk manager survives restarts
-	todayLoss, err := pnls.Today(ctx, cfg.Symbol)
-	if err != nil {
-		log.Fatal("load daily pnl:", err)
-	}
-	riskMgr := risk.New(cfg.RiskPercent, cfg.MaxDailyLoss)
-	if todayLoss < 0 {
-		riskMgr.RestoreLoss(-todayLoss)
-	}
-	slog.Info("daily pnl restored", "todayLoss", todayLoss)
+	provMgr := provider.NewManager()
+	var enabledProviders []string
 
-	strat := strategy.NewCombinedStrategy(9, 21, 14)
+	if cfg.EnableCTrader {
+		enabledProviders = append(enabledProviders, "ctrader")
 
-	// Load persisted tokens from DB (overrides .env after first refresh)
-	if token, err := bot.LoadCredential(ctx, pool, "ctrader_access_token"); err == nil && token != "" {
-		cfg.AccessToken = token
-		slog.Info("loaded cTrader access token from DB")
-	}
-	if token, err := bot.LoadCredential(ctx, pool, "ctrader_refresh_token"); err == nil && token != "" {
-		cfg.RefreshToken = token
-	}
-
-	// Connect to cTrader
-	connectStart := time.Now()
-	client := api.NewClient(cfg.Demo, cfg.AccountID, cfg.SymbolID)
-
-	if err := client.Connect(); err != nil {
-		events.Insert(ctx, "error", map[string]any{"error": err.Error(), "stage": "connect"}, elapsed(connectStart))
-		log.Fatal("connect:", err)
-	}
-	events.Insert(ctx, "connected", map[string]any{"host": cfg.Symbol}, elapsed(connectStart))
-
-	authStart := time.Now()
-	if err := client.AuthApp(cfg.ClientID, cfg.ClientSecret); err != nil {
-		events.Insert(ctx, "auth_fail", map[string]any{"error": err.Error(), "stage": "app_auth"}, elapsed(authStart))
-		log.Fatal("app auth:", err)
-	}
-	time.Sleep(2 * time.Second)
-
-	// Discover ctidTraderAccountId — this is cTrader's internal ID, different from the broker account number.
-	accounts, err := client.GetAccountList(cfg.AccessToken)
-	if err != nil {
-		log.Fatal("get account list:", err)
-	}
-	var ctidAccountID int64
-	for _, acc := range accounts {
-		if acc.IsLive == !cfg.Demo {
-			ctidAccountID = acc.CtidTraderAccountID
-			slog.Info("found trading account",
-				"ctidTraderAccountID", acc.CtidTraderAccountID,
-				"traderLogin", acc.TraderLogin,
-				"isLive", acc.IsLive,
-			)
-			break
+		ctraderClient := api.NewClient(cfg.CTrader.Demo, cfg.CTrader.AccountID, cfg.CTrader.SymbolID)
+		if err := ctraderClient.Connect(); err != nil {
+			log.Fatal("ctrader connect:", err)
+		}
+		ctraderProv := ctrader.New(cfg, ctraderClient, svc.DB.Pool, svc.Repos.Events, svc.Repos.Snapshots)
+		if err := provMgr.Register("ctrader", ctraderProv); err != nil {
+			log.Fatal("register ctrader:", err)
 		}
 	}
-	if ctidAccountID == 0 {
-		log.Fatalf("no %s account found in account list (got %d accounts)", cfg.Mode(), len(accounts))
-	}
-	client.SetAccountID(ctidAccountID)
 
-	if err := client.AuthAccount(cfg.AccessToken); err != nil {
-		events.Insert(ctx, "auth_fail", map[string]any{"error": err.Error(), "stage": "account_auth"}, elapsed(authStart))
-		log.Fatal("account auth:", err)
-	}
-	events.Insert(ctx, "auth_ok", map[string]any{"account_id": cfg.AccountID}, elapsed(authStart))
-	time.Sleep(2 * time.Second)
+	if cfg.EnableBinance {
+		enabledProviders = append(enabledProviders, "binance")
 
-	// Fetch real account balance and snapshot it
-	fetchStart := time.Now()
-	traderInfo, err := client.FetchAccountInfo()
-	if err != nil {
-		slog.Warn("FetchAccountInfo failed, using configured initial balance", "err", err, "balance", cfg.InitialBalance)
-		traderInfo = api.TraderInfo{Balance: cfg.InitialBalance}
-	}
-	balance    := traderInfo.Balance
-	leverage   := traderInfo.Leverage
-	brokerName := traderInfo.BrokerName
-	trigger    := "startup"
-	snapshots.Insert(ctx, snapshot.Snapshot{
-		Provider:       "ctrader",
-		ProviderAcctID: fmt.Sprintf("%d", cfg.AccountID),
-		Balance:        balance,
-		LeverageRatio:  &leverage,
-		BrokerName:     &brokerName,
-		Trigger:        &trigger,
-		SnapshottedAt:  time.Now(),
-	})
-	events.Insert(ctx, "account_snapshot", map[string]any{
-		"balance":  balance,
-		"leverage": leverage,
-		"broker":   brokerName,
-	}, elapsed(fetchStart))
-
-	// Reconcile: discover any positions already open from before a restart
-	reconcileStart := time.Now()
-	openPositions, err := client.Reconcile()
-	if err != nil {
-		log.Fatal("reconcile:", err)
-	}
-	// check if any open position exists for our symbol specifically
-	var hasOpenPosition bool
-	for _, pos := range openPositions {
-		if pos.SymbolID == cfg.SymbolID {
-			hasOpenPosition = true
-			break
+		binanceProv := binance.New(cfg, svc.DB.Pool, svc.Repos.Events, svc.Repos.Snapshots)
+		if err := binanceProv.Connect(); err != nil {
+			log.Fatal("binance connect:", err)
+		}
+		if err := provMgr.Register("binance", binanceProv); err != nil {
+			log.Fatal("register binance:", err)
 		}
 	}
-	slog.Info("startup reconcile", "openPositions", len(openPositions), "hasOpenPosition", hasOpenPosition)
-	events.Insert(ctx, "reconcile", map[string]any{
-		"open_positions":    len(openPositions),
-		"has_open_position": hasOpenPosition,
-	}, elapsed(reconcileStart))
 
-	// Warm up EMA + RSI from cTrader historical trendbars (50 × M5 candles ≈ 4 hours)
-	warmupStart := time.Now()
-	historicalBars, err := client.FetchHistoricalTrendbars(50)
+	if len(enabledProviders) == 0 {
+		log.Fatal("no providers enabled")
+	}
+
+	authResults, err := provMgr.AuthAllProviders(ctx)
 	if err != nil {
-		slog.Warn("warmup fetch failed, starting cold", "err", err)
-	} else {
-		closePrices := make([]float64, len(historicalBars))
-		for i, bar := range historicalBars {
-			closePrices[i] = bar.Close
-			candles.Upsert(ctx, candle.Candle{
-				Symbol:     cfg.Symbol,
-				SymbolID:   cfg.SymbolID,
-				Period:     "M5",
-				Open:       bar.Open,
-				High:       bar.High,
-				Low:        bar.Low,
-				Close:      bar.Close,
-				TickVolume: bar.Volume,
-				BarTime:    time.Unix(bar.OpenTime, 0).UTC(),
-				ReceivedAt: time.Now(),
-			})
-		}
-		strat.WarmUp(closePrices)
-		slog.Info("strategy warmed up", "candles", len(historicalBars), "elapsedMs", elapsed(warmupStart))
+		log.Fatal("provider auth failed: ", err)
 	}
 
-	if err := client.SubscribeSpots(); err != nil {
-		log.Fatal("subscribe spots:", err)
+	if err := provMgr.SetupAllProviders(ctx); err != nil {
+		log.Fatal("provider setup failed: ", err)
 	}
-	if err := client.SubscribeLiveTrendbar(); err != nil {
-		log.Fatal("subscribe live trendbar:", err)
+
+
+	var wg sync.WaitGroup
+
+	if cfg.EnableCTrader {
+		prov, _ := provMgr.GetProvider("ctrader")
+		authResult := authResults["ctrader"]
+
+		wg.Go(func() {
+			startBotForProvider(ctx, cfg, svc, prov, cfg.CTraderSymbol, authResult, botStart)
+		})
+	}
+
+	if cfg.EnableBinance {
+		prov, _ := provMgr.GetProvider("binance")
+		authResult := authResults["binance"]
+
+		wg.Go(func() {
+			startBotForProvider(ctx, cfg, svc, prov, cfg.BinanceSymbol, authResult, botStart)
+		})
+	}
+
+	wg.Wait()
+
+	if err := provMgr.CloseAllProviders(); err != nil {
+		slog.Warn("provider close errors on shutdown", "err", err)
+	}
+	slog.Info("all bots stopped")
+}
+
+func startBotForProvider(
+	ctx context.Context,
+	cfg *config.Config,
+	svc *Services,
+	prov provider.Provider,
+	symbol string,
+	authResult *provider.AuthResult,
+	botStart time.Time,
+) {
+
+	defer func() {
+		if r := recover(); r != nil {
+			slog.Error("bot panic recovered", "provider", prov.Name(), "symbol", symbol, "panic", r)
+		}
+	}()
+
+	if authResult == nil {
+		slog.Error("auth result missing — provider auth failed, bot will not start", "provider", prov.Name(), "symbol", symbol)
+		return
+	}
+
+	symbolUUID, err := svc.Lookup.Get(symbol)
+	if err != nil {
+		slog.Error("get symbol uuid failed", "provider", prov.Name(), "symbol", symbol, "err", err)
+		return
+	}
+
+	botResult := initializeBot(ctx, cfg, svc, prov, symbol, symbolUUID, authResult)
+
+	warmer := marketstate.NewWarmer(prov, botResult.ProcessorMgr, 100)
+	if err := warmer.WarmupAllTimeframes(ctx, symbol); err != nil {
+		slog.Error("warm-up failed — bot will not start", "provider", prov.Name(), "err", err)
+		return
+	}
+
+	if err := prov.StartStreaming(); err != nil {
+		slog.Error("start streaming failed", "provider", prov.Name(), "err", err)
+		return
 	}
 
 	slog.Info("bot running",
-		"symbol", cfg.Symbol,
-		"demo", cfg.Demo,
+		"provider", prov.Name(),
+		"symbol", symbol,
+		"balance", authResult.Balance,
 		"riskPercent", cfg.RiskPercent,
-		"maxDailyLoss", cfg.MaxDailyLoss,
+		"maxDailyLossPct", fmt.Sprintf("%.0f%%", cfg.MaxDailyLossPct),
 		"startupMs", elapsed(botStart),
 	)
 
-	bot.New(cfg, client, pool, riskMgr, strat, balance, hasOpenPosition, ticks, candles, signals, orders, fills, positions, pnls, events).Run(ctx, botStart)
+	const maxReconnects = 5
+	backoff := 15 * time.Second
+
+	for attempt := 0; ; attempt++ {
+		botResult.Bot.Run(ctx, botStart)
+
+		if ctx.Err() != nil {
+			return // graceful shutdown — don't retry
+		}
+		if attempt >= maxReconnects {
+			slog.Error("max reconnects reached — bot stopped", "provider", prov.Name())
+			return
+		}
+
+		slog.Warn("provider disconnected — reconnecting",
+			"provider", prov.Name(), "attempt", attempt+1, "backoff", backoff)
+
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(backoff):
+		}
+
+		if err := prov.Connect(); err != nil {
+			slog.Error("reconnect: Connect failed", "provider", prov.Name(), "err", err)
+		} else if _, err := prov.Auth(ctx); err != nil {
+			slog.Error("reconnect: Auth failed", "provider", prov.Name(), "err", err)
+		} else if err := prov.Setup(); err != nil {
+			slog.Error("reconnect: Setup failed", "provider", prov.Name(), "err", err)
+		} else if err := prov.StartStreaming(); err != nil {
+			slog.Error("reconnect: StartStreaming failed", "provider", prov.Name(), "err", err)
+		} else {
+			slog.Info("reconnected", "provider", prov.Name(), "attempt", attempt+1)
+			backoff = 15 * time.Second // reset on success
+			botResult.Bot.Reset()
+			continue
+		}
+
+		// One of the steps above failed — apply backoff and retry
+		backoff = min(backoff*2, 5*time.Minute)
+	}
 }
 
 func elapsed(t time.Time) int64 {

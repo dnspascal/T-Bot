@@ -10,8 +10,7 @@ type Fill struct {
 	ProviderFillID     string
 	ProviderOrderID    *string
 	ProviderPositionID *string
-	SymbolID           int64
-	Symbol             string
+	SymbolID           string
 	Side               string
 	Volume             *int64
 	FilledVolume       *int64
@@ -30,6 +29,7 @@ type Fill struct {
 	PnLConversionFee   *float64
 	TradeDurationMs    *int64
 	NetProfit          *float64
+	CloseReason        *string
 	ProviderCreateTime *time.Time
 	ProviderExecTime   *time.Time
 	RawPayload         []byte
