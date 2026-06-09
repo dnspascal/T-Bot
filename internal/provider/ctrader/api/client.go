@@ -19,6 +19,7 @@ type ExecutionEvent struct {
 	Deal             DealInfo
 	HasDeal          bool
 	ClosedPositionID int64 // non-zero when broker closed position without deal (TP/SL hit)
+	ErrorCode        string
 	Timestamp        time.Time
 }
 
@@ -315,6 +316,14 @@ func (c *Client) handleMessage(payloadType uint32, payload []byte) {
 			"orderID", orderID,
 			"description", description,
 		)
+		select {
+		case c.ExecutionCh <- ExecutionEvent{
+			Type:      "ORDER_REJECTED",
+			ErrorCode: errorCode,
+			Timestamp: time.Now().UTC(),
+		}:
+		default:
+		}
 
 	case ProtoOADealListRes:
 		deals := decodeDealListRes(payload)

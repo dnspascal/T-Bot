@@ -421,6 +421,9 @@ func (b *Bot) processClosedCandle(ctx context.Context, _ float64) {
 			"orderID", b.pendingOrderID,
 			"elapsed", time.Since(b.pendingOrderSentAt).Round(time.Second),
 		)
+		if b.pendingOrderID != "" {
+			b.orders.UpdateError(ctx, b.pendingOrderID, "TIMEOUT", "no execution event received")
+		}
 		b.pendingOrder = false
 	}
 
@@ -579,8 +582,11 @@ func (b *Bot) onExecution(ctx context.Context, exec provider.ExecutionEvent) {
 		switch exec.Type {
 		case "ORDER_REJECTED", "ORDER_CANCELLED", "ORDER_EXPIRED":
 			b.pendingOrder = false
-			slog.Warn("order not filled", "reason", exec.Type)
-			b.events.Insert(ctx, "order_not_filled", map[string]any{"reason": exec.Type}, 0)
+			slog.Warn("order not filled", "reason", exec.Type, "errorCode", exec.ErrorCode)
+			if b.pendingOrderID != "" {
+				b.orders.UpdateError(ctx, b.pendingOrderID, exec.ErrorCode, exec.Type)
+			}
+			b.events.Insert(ctx, "order_not_filled", map[string]any{"reason": exec.Type, "errorCode": exec.ErrorCode}, 0)
 		}
 		return
 	}
@@ -610,8 +616,11 @@ func (b *Bot) onExecution(ctx context.Context, exec provider.ExecutionEvent) {
 
 	case "ORDER_REJECTED", "ORDER_CANCELLED", "ORDER_EXPIRED":
 		b.pendingOrder = false
-		slog.Warn("order not filled", "reason", exec.Type)
-		b.events.Insert(ctx, "order_not_filled", map[string]any{"reason": exec.Type}, 0)
+		slog.Warn("order not filled", "reason", exec.Type, "errorCode", exec.ErrorCode)
+		if b.pendingOrderID != "" {
+			b.orders.UpdateError(ctx, b.pendingOrderID, exec.ErrorCode, exec.Type)
+		}
+		b.events.Insert(ctx, "order_not_filled", map[string]any{"reason": exec.Type, "errorCode": exec.ErrorCode}, 0)
 	}
 }
 

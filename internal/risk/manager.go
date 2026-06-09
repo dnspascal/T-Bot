@@ -55,6 +55,9 @@ func (m *Manager) PositionSize(balance, stopLossPips float64) (int64, error) {
 	microLots := riskAmount / (stopLossPips * m.pipValuePerMicroLot)
 
 	volume := int64(microLots * float64(m.unitsPerMicroLot))
+	if m.unitsPerMicroLot > 0 {
+		volume = (volume / m.unitsPerMicroLot) * m.unitsPerMicroLot
+	}
 	volume = max(m.minVolume, min(volume, m.maxVolume))
 
 	return volume, nil

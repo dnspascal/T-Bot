@@ -79,6 +79,7 @@ type ExecutionEvent struct {
 	Deal             *DealInfo
 	HasDeal          bool
 	ClosedPositionID string // set when broker closed position without deal details (TP/SL hit server-side)
+	ErrorCode        string
 	Timestamp        time.Time
 }
 

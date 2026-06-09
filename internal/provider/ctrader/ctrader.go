@@ -446,6 +446,7 @@ func (c *CTrader) ExecutionChan() <-chan provider.ExecutionEvent {
 				ProviderName: c.Name(),
 				Timestamp:    event.Timestamp,
 				HasDeal:      event.HasDeal,
+				ErrorCode:    event.ErrorCode,
 			}
 			if event.ClosedPositionID != 0 {
 				execEvent.ClosedPositionID = fmt.Sprintf("%d", event.ClosedPositionID)
