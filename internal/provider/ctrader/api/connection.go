@@ -22,12 +22,13 @@ const (
 type MessageHandler func(payloadType uint32, payload []byte)
 
 type Connection struct {
-	host    string
-	conn    net.Conn
-	mu      sync.Mutex
-	handler MessageHandler
-	done    chan struct{}
-	dead    chan struct{} 
+	host      string
+	conn      net.Conn
+	mu        sync.Mutex
+	handler   MessageHandler
+	done      chan struct{}
+	dead      chan struct{}
+	closeOnce sync.Once
 }
 
 func NewConnection(demo bool, handler MessageHandler) *Connection {
@@ -44,12 +45,16 @@ func NewConnection(demo bool, handler MessageHandler) *Connection {
 }
 
 func (c *Connection) Connect() error {
+	c.Close()
+	c.done = make(chan struct{})
+	c.dead = make(chan struct{})
+	c.closeOnce = sync.Once{}
+
 	conn, err := tls.Dial("tcp", c.host, &tls.Config{})
 	if err != nil {
 		return fmt.Errorf("dial %s: %w", c.host, err)
 	}
 	c.conn = conn
-	slog.Info("connected to cTrader", "host", c.host)
 	go c.readLoop()
 	go c.heartbeatLoop()
 	return nil
@@ -68,8 +73,9 @@ func (c *Connection) SendRaw(payloadType uint32, inner []byte) error {
 }
 
 func (c *Connection) readLoop() {
-	defer close(c.dead)
-	
+	dead := c.dead
+	defer close(dead)
+
 	for {
 		select {
 		case <-c.done:
@@ -113,7 +119,7 @@ func (c *Connection) heartbeatLoop() {
 }
 
 func (c *Connection) Close() {
-	close(c.done)
+	c.closeOnce.Do(func() { close(c.done) })
 	if c.conn != nil {
 		c.conn.Close()
 	}

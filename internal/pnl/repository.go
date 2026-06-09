@@ -15,13 +15,13 @@ func New(db *pgxpool.Pool) *Repository {
 	return &Repository{db: db}
 }
 
-func (r *Repository) Upsert(ctx context.Context, symbol string, realized, grossProfit, commission, swap float64, isWin bool, roundTripMs, slippagePoints int64) error {
+func (r *Repository) Upsert(ctx context.Context, symbolID string, realized, grossProfit, commission, swap float64, isWin bool, roundTripMs, slippagePoints int64) error {
 	const q = `
 		INSERT INTO daily_pnl
-			(date, symbol, realized_pnl, gross_profit, total_commission, total_swap,
+			(date, symbol_id, realized_pnl, gross_profit, total_commission, total_swap,
 			 trade_count, win_count, loss_count, avg_round_trip_ms, avg_slippage_points, updated_at)
 		VALUES (CURRENT_DATE, $1, $2, $3, $4, $5, 1, $6, $7, $8, $9, NOW())
-		ON CONFLICT (date, symbol) DO UPDATE SET
+		ON CONFLICT (date, symbol_id) DO UPDATE SET
 			realized_pnl        = daily_pnl.realized_pnl    + EXCLUDED.realized_pnl,
 			gross_profit        = daily_pnl.gross_profit     + EXCLUDED.gross_profit,
 			total_commission    = daily_pnl.total_commission + EXCLUDED.total_commission,
@@ -40,25 +40,28 @@ func (r *Repository) Upsert(ctx context.Context, symbol string, realized, grossP
 	} else {
 		lossCount = 1
 	}
-	_, err := r.db.Exec(ctx, q, symbol, realized, grossProfit, commission, swap, winCount, lossCount, roundTripMs, slippagePoints)
+	_, err := r.db.Exec(ctx, q, symbolID, realized, grossProfit, commission, swap, winCount, lossCount, roundTripMs, slippagePoints)
 	if err != nil {
 		return fmt.Errorf("pnl.Upsert: %w", err)
 	}
 	return nil
 }
 
-func (r *Repository) Today(ctx context.Context, symbol string) (float64, error) {
-	const q = `SELECT COALESCE(realized_pnl, 0) FROM daily_pnl WHERE date = CURRENT_DATE AND symbol = $1`
+func (r *Repository) Today(ctx context.Context, symbolID string) (float64, error) {
+	const q = `SELECT COALESCE(realized_pnl, 0) FROM daily_pnl WHERE date = CURRENT_DATE AND symbol_id = $1`
 	var v float64
-	if err := r.db.QueryRow(ctx, q, symbol).Scan(&v); err != nil {
-		return 0, nil
+	if err := r.db.QueryRow(ctx, q, symbolID).Scan(&v); err != nil {
+		if err.Error() == "no rows in result set" {
+			return 0, nil // no trades yet today
+		}
+		return 0, fmt.Errorf("pnl.Today: %w", err)
 	}
 	return v, nil
 }
 
 func (r *Repository) All(ctx context.Context) ([]DailyPnL, error) {
 	const q = `
-		SELECT id, date, symbol, realized_pnl, gross_profit, total_commission, total_swap,
+		SELECT id, date, symbol_id, realized_pnl, gross_profit, total_commission, total_swap,
 		       trade_count, win_count, loss_count, avg_round_trip_ms, avg_slippage_points, updated_at
 		FROM daily_pnl
 		ORDER BY date DESC`
@@ -72,7 +75,7 @@ func (r *Repository) All(ctx context.Context) ([]DailyPnL, error) {
 	for rows.Next() {
 		var d DailyPnL
 		if err := rows.Scan(
-			&d.ID, &d.Date, &d.Symbol, &d.RealizedPnL, &d.GrossProfit, &d.TotalCommission, &d.TotalSwap,
+			&d.ID, &d.Date, &d.SymbolID, &d.RealizedPnL, &d.GrossProfit, &d.TotalCommission, &d.TotalSwap,
 			&d.TradeCount, &d.WinCount, &d.LossCount, &d.AvgRoundTripMs, &d.AvgSlippagePoints, &d.UpdatedAt,
 		); err != nil {
 			return nil, fmt.Errorf("pnl.All scan: %w", err)

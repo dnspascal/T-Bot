@@ -5,7 +5,7 @@ import "time"
 type DailyPnL struct {
 	ID                string
 	Date              time.Time
-	Symbol            string
+	SymbolID          string
 	RealizedPnL       float64
 	GrossProfit       float64
 	TotalCommission   float64

@@ -6,14 +6,20 @@ CREATE TABLE positions (
     provider             TEXT          NOT NULL DEFAULT 'ctrader', -- ctrader | oanda | ib | mt5
     provider_position_id TEXT          NOT NULL,   -- provider's own position identifier
     provider_acct_id     TEXT          NOT NULL,   -- provider's own account identifier
-    symbol_id            BIGINT        NOT NULL,
-    symbol               TEXT          NOT NULL,
+    symbol_id            UUID          NOT NULL REFERENCES symbols(id),
     side                 TEXT          NOT NULL CHECK (side IN ('BUY', 'SELL')),
     volume               BIGINT        NOT NULL,   -- in provider units (e.g. cTrader: 100 = 0.01 lots)
+    tier                 SMALLINT      NOT NULL DEFAULT 0, -- confluence tier (0=normal … 3=very strong)
 
     open_price           NUMERIC(12,5),            -- average entry price
     current_sl           NUMERIC(12,5),            -- current stop loss level
     current_tp           NUMERIC(12,5),            -- current take profit level
+
+    -- High-water marks tracked by the watcher across M1 candles, written on close.
+    -- max_favorable: best price reached in trade direction (peak unrealized profit level).
+    -- max_adverse:   worst price reached against trade direction (how close to SL we got).
+    max_favorable        NUMERIC(12,5),
+    max_adverse          NUMERIC(12,5),
 
     -- Costs accumulated while position is open (real currency amounts)
     swap                 NUMERIC(18,4) NOT NULL DEFAULT 0,
@@ -39,5 +45,5 @@ CREATE TABLE positions (
 );
 
 CREATE INDEX idx_positions_status      ON positions (status) WHERE status = 'open';
-CREATE INDEX idx_positions_symbol      ON positions (symbol, created_at DESC);
+CREATE INDEX idx_positions_symbol_id   ON positions (symbol_id, created_at DESC);
 CREATE INDEX idx_positions_provider_id ON positions (provider, provider_position_id);

@@ -4,8 +4,7 @@ import "time"
 
 type Tick struct {
 	ID                string
-	Symbol            string
-	SymbolID          int64
+	SymbolID          string
 	Bid               float64
 	Ask               float64
 	Mid               float64
@@ -13,5 +12,5 @@ type Tick struct {
 	SessionClose      *float64
 	ProviderTimestamp *time.Time
 	ReceivedAt        time.Time
-	ProcessingMs      int64
+	ProcessingUS      int64
 }

@@ -15,16 +15,18 @@ type PriceEvent struct {
 }
 
 type ExecutionEvent struct {
-	Type      string // ORDER_FILLED | ORDER_REJECTED | ORDER_CANCELLED | ...
-	Deal      DealInfo
-	HasDeal   bool
-	Timestamp time.Time
+	Type             string // ORDER_FILLED | ORDER_REJECTED | ORDER_CANCELLED | ...
+	Deal             DealInfo
+	HasDeal          bool
+	ClosedPositionID int64 // non-zero when broker closed position without deal (TP/SL hit)
+	Timestamp        time.Time
 }
 
 type CtidAccount struct {
 	CtidTraderAccountID int64
 	IsLive              bool
-	TraderLogin         int64 
+	TraderLogin         int64
+	BrokerName          string
 }
 
 type Client struct {
@@ -42,6 +44,7 @@ type Client struct {
 	reconcileResCh chan []OpenPosition
 	trendbarsResCh chan []Trendbar
 	accountListCh  chan []CtidAccount
+	dealListResCh  chan []DealInfo
 }
 
 func NewClient(demo bool, accountID, symbolID int64) *Client {
@@ -55,6 +58,7 @@ func NewClient(demo bool, accountID, symbolID int64) *Client {
 		reconcileResCh: make(chan []OpenPosition, 1),
 		trendbarsResCh: make(chan []Trendbar, 1),
 		accountListCh:  make(chan []CtidAccount, 1),
+		dealListResCh:  make(chan []DealInfo, 1),
 	}
 	c.conn = NewConnection(demo, c.handleMessage)
 	return c
@@ -129,15 +133,15 @@ func (c *Client) SubscribeSpots() error {
 }
 
 
-func (c *Client) SubscribeLiveTrendbar() error {
+func (c *Client) SubscribeLiveTrendbar(period uint32) error {
 	return c.conn.SendRaw(ProtoOASubscribeLiveTrendbarReq,
-		encodeSubscribeLiveTrendbarReq(c.accountID, c.symbolID, PeriodM5))
+		encodeSubscribeLiveTrendbarReq(c.accountID, c.symbolID, period))
 }
 
 
-func (c *Client) FetchHistoricalTrendbars(count int) ([]Trendbar, error) {
+func (c *Client) FetchHistoricalTrendbars(period uint32, count int) ([]Trendbar, error) {
 	if err := c.conn.SendRaw(ProtoOAGetTrendbarsReq,
-		encodeGetTrendbarsReq(c.accountID, c.symbolID, PeriodM5, time.Now().UnixMilli(), uint32(count))); err != nil {
+		encodeGetTrendbarsReq(c.accountID, c.symbolID, period, time.Now().UnixMilli(), uint32(count))); err != nil {
 		return nil, fmt.Errorf("FetchHistoricalTrendbars send: %w", err)
 	}
 	select {
@@ -148,6 +152,49 @@ func (c *Client) FetchHistoricalTrendbars(count int) ([]Trendbar, error) {
 	}
 }
 
+
+// GetDealsForPosition fetches all deals in [from, now] and returns the close deal
+// for the given positionID, or nil if not found.
+func (c *Client) GetDealsForPosition(positionID int64, from time.Time) (*DealInfo, error) {
+	fromMs := from.UnixMilli()
+	toMs := time.Now().UnixMilli()
+	if err := c.conn.SendRaw(ProtoOADealListReq,
+		encodeDealListReq(c.accountID, fromMs, toMs, 500)); err != nil {
+		return nil, fmt.Errorf("GetDealsForPosition send: %w", err)
+	}
+	select {
+	case deals := <-c.dealListResCh:
+		for i := range deals {
+			d := &deals[i]
+			if d.PositionID == positionID && d.IsClose {
+				return d, nil
+			}
+		}
+		return nil, nil
+	case <-time.After(15 * time.Second):
+		// Drain any late-arriving response so it doesn't corrupt the next call.
+		select {
+		case <-c.dealListResCh:
+		default:
+		}
+		return nil, fmt.Errorf("GetDealsForPosition: timeout waiting for response")
+	}
+}
+
+func (c *Client) ClosePosition(positionID, volume int64) error {
+	c.mu.Lock()
+	authed := c.authed
+	accountID := c.accountID
+	c.mu.Unlock()
+
+	if !authed {
+		return fmt.Errorf("not authenticated")
+	}
+
+	slog.Info("closing position", "positionID", positionID, "volume", volume)
+	return c.conn.SendRaw(ProtoOAClosePositionReq,
+		encodeClosePositionReq(accountID, positionID, volume))
+}
 
 func (c *Client) PlaceMarketOrder(side uint32, volume int64, sl, tp float64) error {
 	c.mu.Lock()
@@ -197,14 +244,8 @@ func (c *Client) handleMessage(payloadType uint32, payload []byte) {
 			}
 		}
 		
-		if bar, ok := decodeLiveTrendbarEvent(payload); ok {
-			slog.Debug("live trendbar received",
-				"openTime", bar.OpenTime,
-				"open", bar.Open,
-				"high", bar.High,
-				"low", bar.Low,
-				"close", bar.Close,
-			)
+		for _, bar := range decodeLiveTrendbarEvents(payload) {
+	
 			select {
 			case c.TrendbarCh <- bar:
 			default:
@@ -212,18 +253,15 @@ func (c *Client) handleMessage(payloadType uint32, payload []byte) {
 		}
 
 	case ProtoOASubscribeLiveTrendbarRes:
-		slog.Info("live trendbar subscription confirmed")
 
 	case ProtoOAGetTrendbarsRes:
 		bars := decodeGetTrendbarsRes(payload)
-		slog.Info("historical trendbars received", "count", len(bars))
 		select {
 		case c.trendbarsResCh <- bars:
 		default:
 		}
 
 	case ProtoOATraderRes:
-		slog.Debug("ProtoOATraderRes received", "payloadHex", fmt.Sprintf("%x", payload))
 		if info, ok := decodeTraderRes(payload); ok {
 			slog.Info("account info received",
 				"balance", info.Balance,
@@ -235,28 +273,38 @@ func (c *Client) handleMessage(payloadType uint32, payload []byte) {
 			default:
 			}
 		} else {
-			slog.Warn("decodeTraderRes failed — trader field not found in payload")
+			slog.Warn("ProtoOATraderRes: no usable trader data in server response")
+			select {
+			case c.traderResCh <- TraderInfo{}:
+			default:
+			}
 		}
 
 	case ProtoOAReconcileRes:
 		positions := decodeReconcileRes(payload)
-		slog.Info("reconcile received", "openPositions", len(positions))
 		select {
 		case c.reconcileResCh <- positions:
 		default:
 		}
 
 	case ProtoOAExecutionEvent:
-		execType, deal, hasDeal := decodeFullExecutionEvent(payload)
+		execType, deal, hasDeal, closedPosID := decodeFullExecutionEvent(payload)
 		slog.Info("execution event received",
 			"type", execType,
 			"dealID", deal.DealID,
 			"positionID", deal.PositionID,
+			"closedPosID", closedPosID,
 			"executionPrice", deal.ExecutionPrice,
 			"isClose", deal.IsClose,
 		)
 		select {
-		case c.ExecutionCh <- ExecutionEvent{Type: execType, Deal: deal, HasDeal: hasDeal, Timestamp: time.Now().UTC()}:
+		case c.ExecutionCh <- ExecutionEvent{
+			Type:             execType,
+			Deal:             deal,
+			HasDeal:          hasDeal,
+			ClosedPositionID: closedPosID,
+			Timestamp:        time.Now().UTC(),
+		}:
 		default:
 		}
 
@@ -268,16 +316,21 @@ func (c *Client) handleMessage(payloadType uint32, payload []byte) {
 			"description", description,
 		)
 
+	case ProtoOADealListRes:
+		deals := decodeDealListRes(payload)
+		select {
+		case c.dealListResCh <- deals:
+		default:
+		}
+
 	case ProtoOAGetAccountListByAccessTokenRes:
 		accounts := decodeAccountListRes(payload)
-		slog.Info("account list received", "count", len(accounts))
 		select {
 		case c.accountListCh <- accounts:
 		default:
 		}
 
 	case ProtoOASubscribeSpotsRes:
-		slog.Info("spot subscription confirmed")
 
 	case ProtoOAErrorRes:
 		code, desc := decodeOAError(payload)
@@ -290,7 +343,7 @@ func (c *Client) handleMessage(payloadType uint32, payload []byte) {
 	case 51: 
 
 	default:
-		slog.Debug("unhandled message", "payloadType", payloadType)
+		slog.Debug("unhandled message", "payloadType", payloadType, "payloadHex", fmt.Sprintf("%x", payload))
 	}
 }
 

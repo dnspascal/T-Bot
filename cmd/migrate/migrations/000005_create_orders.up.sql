@@ -10,8 +10,7 @@ CREATE TABLE orders (
     provider_order_id     TEXT,          -- provider's own order identifier
     provider_position_id  TEXT,          -- provider's own position identifier
 
-    symbol                TEXT          NOT NULL,
-    symbol_id             BIGINT        NOT NULL,
+    symbol_id             UUID          NOT NULL REFERENCES symbols(id),
     side                  TEXT          NOT NULL CHECK (side IN ('BUY', 'SELL')),
     volume                BIGINT        NOT NULL,   -- requested provider units
     sl                    NUMERIC(12,5),
@@ -33,7 +32,7 @@ CREATE TABLE orders (
 );
 
 CREATE INDEX idx_orders_status           ON orders (status);
-CREATE INDEX idx_orders_symbol           ON orders (symbol, created_at DESC);
+CREATE INDEX idx_orders_symbol_id        ON orders (symbol_id, created_at DESC);
 CREATE INDEX idx_orders_signal           ON orders (signal_id);
 CREATE INDEX idx_orders_provider_order   ON orders (provider, provider_order_id);
 CREATE INDEX idx_orders_provider_pos     ON orders (provider, provider_position_id);

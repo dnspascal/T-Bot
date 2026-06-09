@@ -19,8 +19,8 @@ func New(db *pgxpool.Pool) *Repository {
 func (r *Repository) Upsert(ctx context.Context, p Position) error {
 	const q = `
 		INSERT INTO positions
-			(our_order_id, provider, provider_position_id, provider_acct_id, symbol_id, symbol, side, volume,
-			 open_price, current_sl, current_tp, swap, commission, used_margin,
+			(our_order_id, provider, provider_position_id, provider_acct_id, symbol_id, side, volume,
+			 tier, open_price, current_sl, current_tp, swap, commission, used_margin,
 			 status, trailing_stop_loss, guaranteed_stop_loss, label, comment,
 			 open_timestamp, close_timestamp, raw_payload)
 		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)
@@ -28,6 +28,7 @@ func (r *Repository) Upsert(ctx context.Context, p Position) error {
 			open_price           = EXCLUDED.open_price,
 			current_sl           = EXCLUDED.current_sl,
 			current_tp           = EXCLUDED.current_tp,
+			tier                 = EXCLUDED.tier,
 			swap                 = EXCLUDED.swap,
 			commission           = EXCLUDED.commission,
 			used_margin          = EXCLUDED.used_margin,
@@ -37,8 +38,8 @@ func (r *Repository) Upsert(ctx context.Context, p Position) error {
 			raw_payload          = EXCLUDED.raw_payload,
 			updated_at           = NOW()`
 	_, err := r.db.Exec(ctx, q,
-		p.OurOrderID, p.Provider, p.ProviderPositionID, p.ProviderAcctID, p.SymbolID, p.Symbol, p.Side, p.Volume,
-		p.OpenPrice, p.CurrentSL, p.CurrentTP, p.Swap, p.Commission, p.UsedMargin,
+		p.OurOrderID, p.Provider, p.ProviderPositionID, p.ProviderAcctID, p.SymbolID, p.Side, p.Volume,
+		p.Tier, p.OpenPrice, p.CurrentSL, p.CurrentTP, p.Swap, p.Commission, p.UsedMargin,
 		p.Status, p.TrailingStopLoss, p.GuaranteedStopLoss, p.Label, p.Comment,
 		p.OpenTimestamp, p.CloseTimestamp, p.RawPayload,
 	)
@@ -48,25 +49,59 @@ func (r *Repository) Upsert(ctx context.Context, p Position) error {
 	return nil
 }
 
-// Close marks a position as closed by its broker-assigned position ID.
-func (r *Repository) Close(ctx context.Context, providerPositionID string, closeTime time.Time) error {
+// Close marks a position as closed and writes the high-water marks tracked during its life.
+func (r *Repository) Close(ctx context.Context, provider, providerPositionID string, closeTime time.Time, maxFavorable, maxAdverse *float64) error {
 	const q = `
 		UPDATE positions SET
 			status          = 'closed',
-			close_timestamp = $2,
+			close_timestamp = $3,
+			max_favorable   = $4,
+			max_adverse     = $5,
 			updated_at      = NOW()
-		WHERE provider = 'ctrader' AND provider_position_id = $1`
-	_, err := r.db.Exec(ctx, q, providerPositionID, closeTime)
+		WHERE provider = $1 AND provider_position_id = $2`
+	_, err := r.db.Exec(ctx, q, provider, providerPositionID, closeTime, maxFavorable, maxAdverse)
 	if err != nil {
 		return fmt.Errorf("position.Close: %w", err)
 	}
 	return nil
 }
 
+func (r *Repository) OpenByProvider(ctx context.Context, provider string) ([]Position, error) {
+	const q = `
+		SELECT id, provider, provider_position_id, provider_acct_id, symbol_id, side, volume,
+		       tier, open_price, current_sl, current_tp, swap, commission, used_margin,
+		       status, trailing_stop_loss, guaranteed_stop_loss, label, comment,
+		       open_timestamp, close_timestamp, created_at, updated_at
+		FROM positions
+		WHERE status = 'open' AND provider = $1`
+	rows, err := r.db.Query(ctx, q, provider)
+	if err != nil {
+		return nil, fmt.Errorf("position.OpenByProvider: %w", err)
+	}
+	defer rows.Close()
+
+	var positions []Position
+	for rows.Next() {
+		var p Position
+		if err := rows.Scan(
+			&p.ID, &p.Provider, &p.ProviderPositionID, &p.ProviderAcctID, &p.SymbolID,
+			&p.Side, &p.Volume, &p.Tier, &p.OpenPrice, &p.CurrentSL, &p.CurrentTP,
+			&p.Swap, &p.Commission, &p.UsedMargin,
+			&p.Status, &p.TrailingStopLoss, &p.GuaranteedStopLoss,
+			&p.Label, &p.Comment, &p.OpenTimestamp, &p.CloseTimestamp,
+			&p.CreatedAt, &p.UpdatedAt,
+		); err != nil {
+			return nil, fmt.Errorf("position.OpenByProvider scan: %w", err)
+		}
+		positions = append(positions, p)
+	}
+	return positions, nil
+}
+
 func (r *Repository) Open(ctx context.Context) ([]Position, error) {
 	const q = `
-		SELECT id, provider, provider_position_id, provider_acct_id, symbol_id, symbol, side, volume,
-		       open_price, current_sl, current_tp, swap, commission, used_margin,
+		SELECT id, provider, provider_position_id, provider_acct_id, symbol_id, side, volume,
+		       tier, open_price, current_sl, current_tp, swap, commission, used_margin,
 		       status, trailing_stop_loss, guaranteed_stop_loss, label, comment,
 		       open_timestamp, close_timestamp, created_at, updated_at
 		FROM positions
@@ -81,8 +116,8 @@ func (r *Repository) Open(ctx context.Context) ([]Position, error) {
 	for rows.Next() {
 		var p Position
 		if err := rows.Scan(
-			&p.ID, &p.Provider, &p.ProviderPositionID, &p.ProviderAcctID, &p.SymbolID, &p.Symbol,
-			&p.Side, &p.Volume, &p.OpenPrice, &p.CurrentSL, &p.CurrentTP,
+			&p.ID, &p.Provider, &p.ProviderPositionID, &p.ProviderAcctID, &p.SymbolID,
+			&p.Side, &p.Volume, &p.Tier, &p.OpenPrice, &p.CurrentSL, &p.CurrentTP,
 			&p.Swap, &p.Commission, &p.UsedMargin,
 			&p.Status, &p.TrailingStopLoss, &p.GuaranteedStopLoss,
 			&p.Label, &p.Comment, &p.OpenTimestamp, &p.CloseTimestamp,

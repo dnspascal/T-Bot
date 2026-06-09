@@ -8,45 +8,91 @@ import (
 	"github.com/joho/godotenv"
 )
 
+type CTraderConfig struct {
+	ClientID        string
+	ClientSecret    string
+	AccessToken     string
+	RefreshToken    string
+	AccountID       int64
+	SymbolID        int64
+	Demo            bool
+	InitialBalance  float64
+}
+
+type BinanceConfig struct {
+	APIKey    string
+	APISecret string
+	TestNet   bool
+}
+
 type Config struct {
 	DatabaseURL string
 
-	// cTrader credentials
-	ClientID     string
-	ClientSecret string
-	AccessToken  string
-	RefreshToken string
-	AccountID    int64
-	Demo         bool
+	CTrader *CTraderConfig
+	Binance *BinanceConfig
 
-	// Risk settings
-	RiskPercent    float64
-	MaxDailyLoss   float64
-	InitialBalance float64 // fallback balance if FetchAccountInfo fails
+	EnableCTrader  bool
+	CTraderSymbol  string
+	EnableBinance  bool
+	BinanceSymbol  string
 
-	// Strategy settings
-	Symbol         string
-	SymbolID       int64
-	StopLossPips   float64
-	TakeProfitPips float64
+	RiskPercent     float64
+	MaxDailyLossPct float64
+
+	Period string
+
+	DevMode bool
+
+	LondonNYOnly     bool 
+	SendTestPosition bool
 }
 
 func Load() (*Config, error) {
 	godotenv.Load()
 
-	accountID, err := strconv.ParseInt(mustEnv("CTRADER_ACCOUNT_ID"), 10, 64)
-	if err != nil {
-		return nil, fmt.Errorf("CTRADER_ACCOUNT_ID must be a number: %w", err)
+	var ctraderCfg *CTraderConfig
+	if getEnv("ENABLE_CTRADER", "true") == "true" {
+		accountID, err := strconv.ParseInt(mustEnv("CTRADER_ACCOUNT_ID"), 10, 64)
+		if err != nil {
+			return nil, fmt.Errorf("CTRADER_ACCOUNT_ID must be a number: %w", err)
+		}
+
+		symbolID, err := strconv.ParseInt(getEnv("CTRADER_SYMBOL_ID", "1"), 10, 64)
+		if err != nil {
+			return nil, fmt.Errorf("CTRADER_SYMBOL_ID must be a number: %w", err)
+		}
+
+		ctraderInitialBalance, err := strconv.ParseFloat(getEnv("CTRADER_INITIAL_BALANCE", "0"), 64)
+		if err != nil {
+			return nil, fmt.Errorf("CTRADER_INITIAL_BALANCE must be a number: %w", err)
+		}
+
+		ctraderCfg = &CTraderConfig{
+			ClientID:       mustEnv("CTRADER_CLIENT_ID"),
+			ClientSecret:   mustEnv("CTRADER_CLIENT_SECRET"),
+			AccessToken:    mustEnv("CTRADER_ACCESS_TOKEN"),
+			RefreshToken:   getEnv("CTRADER_REFRESH_TOKEN", ""),
+			AccountID:      accountID,
+			SymbolID:       symbolID,
+			Demo:           getEnv("CTRADER_DEMO", "true") == "true",
+			InitialBalance: ctraderInitialBalance,
+		}
 	}
 
-	symbolID, err := strconv.ParseInt(getEnv("CTRADER_SYMBOL_ID", "1"), 10, 64)
-	if err != nil {
-		return nil, fmt.Errorf("CTRADER_SYMBOL_ID must be a number: %w", err)
-	}
-
-	initialBalance, err := strconv.ParseFloat(getEnv("INITIAL_BALANCE", "200.0"), 64)
-	if err != nil {
-		return nil, fmt.Errorf("INITIAL_BALANCE must be a number: %w", err)
+	var binanceCfg *BinanceConfig
+	if os.Getenv("BINANCE_API_KEY") != "" || os.Getenv("BINANCE_TESTNET_API_KEY") != "" {
+		isTestNet := getEnv("BINANCE_TESTNET", "true") == "true"
+		apiKey := getEnv("BINANCE_API_KEY", "")
+		apiSecret := getEnv("BINANCE_API_SECRET", "")
+		if isTestNet && os.Getenv("BINANCE_TESTNET_API_KEY") != "" {
+			apiKey = getEnv("BINANCE_TESTNET_API_KEY", "")
+			apiSecret = getEnv("BINANCE_TESTNET_API_SECRET", "")
+		}
+		binanceCfg = &BinanceConfig{
+			APIKey:    apiKey,
+			APISecret: apiSecret,
+			TestNet:   isTestNet,
+		}
 	}
 
 	riskPercent, err := strconv.ParseFloat(getEnv("RISK_PERCENT", "1.0"), 64)
@@ -54,37 +100,31 @@ func Load() (*Config, error) {
 		return nil, fmt.Errorf("RISK_PERCENT must be a number: %w", err)
 	}
 
-	maxDailyLoss, err := strconv.ParseFloat(getEnv("MAX_DAILY_LOSS", "2.0"), 64)
+	maxDailyLossPct, err := strconv.ParseFloat(getEnv("MAX_DAILY_LOSS_PCT", "2.0"), 64)
 	if err != nil {
-		return nil, fmt.Errorf("MAX_DAILY_LOSS must be a number: %w", err)
+		return nil, fmt.Errorf("MAX_DAILY_LOSS_PCT must be a number: %w", err)
 	}
 
-	stopLossPips, err := strconv.ParseFloat(getEnv("STOP_LOSS_PIPS", "10.0"), 64)
-	if err != nil {
-		return nil, fmt.Errorf("STOP_LOSS_PIPS must be a number: %w", err)
+	cfg := &Config{
+		DatabaseURL:     mustEnv("DATABASE_URL"),
+		CTrader:         ctraderCfg,
+		Binance:         binanceCfg,
+		RiskPercent:     riskPercent,
+		MaxDailyLossPct: maxDailyLossPct,
+
+		EnableCTrader: getEnv("ENABLE_CTRADER", "true") == "true",
+		CTraderSymbol: getEnv("CTRADER_SYMBOL", "EURUSD"),
+		EnableBinance: getEnv("ENABLE_BINANCE", "false") == "true",
+		BinanceSymbol: getEnv("BINANCE_SYMBOL", "BTCUSDT"),
+
+		Period: getEnv("TRADING_PERIOD", "M5"),
+
+		DevMode:          getEnv("DEV_MODE", "false") == "true",
+		LondonNYOnly:     getEnv("LONDON_NY_ONLY", "true") == "true",
+		SendTestPosition: getEnv("DEV_MODE", "false") == "true" && getEnv("SEND_TEST_POSITION", "false") == "true",
 	}
 
-	takeProfitPips, err := strconv.ParseFloat(getEnv("TAKE_PROFIT_PIPS", "20.0"), 64)
-	if err != nil {
-		return nil, fmt.Errorf("TAKE_PROFIT_PIPS must be a number: %w", err)
-	}
-
-	return &Config{
-		DatabaseURL:    mustEnv("DATABASE_URL"),
-		ClientID:       mustEnv("CTRADER_CLIENT_ID"),
-		ClientSecret:   mustEnv("CTRADER_CLIENT_SECRET"),
-		AccessToken:    mustEnv("CTRADER_ACCESS_TOKEN"),
-		RefreshToken:   getEnv("CTRADER_REFRESH_TOKEN", ""),
-		AccountID:      accountID,
-		Demo:           getEnv("CTRADER_DEMO", "true") == "true",
-		InitialBalance: initialBalance,
-		RiskPercent:    riskPercent,
-		MaxDailyLoss:   maxDailyLoss,
-		Symbol:         getEnv("SYMBOL", "EURUSD"),
-		SymbolID:       symbolID,
-		StopLossPips:   stopLossPips,
-		TakeProfitPips: takeProfitPips,
-	}, nil
+	return cfg, nil
 }
 
 func mustEnv(key string) string {
@@ -102,9 +142,3 @@ func getEnv(key, fallback string) string {
 	return fallback
 }
 
-func (c *Config) Mode() string {
-	if c.Demo {
-		return "demo"
-	}
-	return "live"
-}
