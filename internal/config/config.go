@@ -17,6 +17,8 @@ type CTraderConfig struct {
 	SymbolID        int64
 	Demo            bool
 	InitialBalance  float64
+	OAuthRedirectURI string
+	OAuthCallbackPort int
 }
 
 type BinanceConfig struct {
@@ -67,15 +69,18 @@ func Load() (*Config, error) {
 			return nil, fmt.Errorf("CTRADER_INITIAL_BALANCE must be a number: %w", err)
 		}
 
+		oauthPort, _ := strconv.Atoi(getEnv("CTRADER_OAUTH_PORT", "8099"))
 		ctraderCfg = &CTraderConfig{
-			ClientID:       mustEnv("CTRADER_CLIENT_ID"),
-			ClientSecret:   mustEnv("CTRADER_CLIENT_SECRET"),
-			AccessToken:    mustEnv("CTRADER_ACCESS_TOKEN"),
-			RefreshToken:   getEnv("CTRADER_REFRESH_TOKEN", ""),
-			AccountID:      accountID,
-			SymbolID:       symbolID,
-			Demo:           getEnv("CTRADER_DEMO", "true") == "true",
-			InitialBalance: ctraderInitialBalance,
+			ClientID:          mustEnv("CTRADER_CLIENT_ID"),
+			ClientSecret:      mustEnv("CTRADER_CLIENT_SECRET"),
+			AccessToken:       getEnv("CTRADER_ACCESS_TOKEN", ""),
+			RefreshToken:      getEnv("CTRADER_REFRESH_TOKEN", ""),
+			AccountID:         accountID,
+			SymbolID:          symbolID,
+			Demo:              getEnv("CTRADER_DEMO", "true") == "true",
+			InitialBalance:    ctraderInitialBalance,
+			OAuthRedirectURI:  getEnv("CTRADER_OAUTH_REDIRECT_URI", "http://localhost:8099/callback"),
+			OAuthCallbackPort: oauthPort,
 		}
 	}
 

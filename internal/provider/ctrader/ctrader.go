@@ -78,7 +78,14 @@ func (c *CTrader) Auth(ctx context.Context) (*provider.AuthResult, error) {
 
 	accounts, err := c.client.GetAccountList(c.ctCfg.AccessToken)
 	if err != nil {
-		return nil, fmt.Errorf("get account list: %w", err)
+		slog.Warn("GetAccountList failed — refreshing credentials and retrying", "err", err)
+		if rfErr := c.RefreshCredentials(ctx); rfErr != nil {
+			return nil, fmt.Errorf("get account list: %w (refresh also failed: %v)", err, rfErr)
+		}
+		accounts, err = c.client.GetAccountList(c.ctCfg.AccessToken)
+		if err != nil {
+			return nil, fmt.Errorf("get account list after refresh: %w", err)
+		}
 	}
 
 	var ctidAccountID int64
@@ -383,7 +390,14 @@ func (c *CTrader) FetchLatestTick(ctx context.Context, symbol string) (*provider
 func (c *CTrader) RefreshCredentials(ctx context.Context) error {
 	newAccessToken, newRefreshToken, err := api.RefreshToken(c.ctCfg.ClientID, c.ctCfg.ClientSecret, c.ctCfg.RefreshToken)
 	if err != nil {
-		return err
+		slog.Warn("token refresh failed — initiating OAuth flow", "err", err)
+		newAccessToken, newRefreshToken, err = api.InitiateOAuthFlow(
+			c.ctCfg.ClientID, c.ctCfg.ClientSecret,
+			c.ctCfg.OAuthRedirectURI, c.ctCfg.OAuthCallbackPort,
+		)
+		if err != nil {
+			return fmt.Errorf("oauth flow failed: %w", err)
+		}
 	}
 	c.ctCfg.AccessToken = newAccessToken
 	c.ctCfg.RefreshToken = newRefreshToken
