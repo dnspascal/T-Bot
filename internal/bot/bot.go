@@ -471,6 +471,7 @@ func (b *Bot) processClosedCandle(ctx context.Context, _ float64) {
 		Provider:            b.provider.Name(),
 		Signal:              result.Signal,
 		Confluence:          result.Confluence,
+		Confidence:          result.Confidence,
 		ProcessingUS:        time.Since(evalStart).Microseconds(),
 		CheckedMarketStates: buildMarketStateSnapshots(states),
 		BarTime:             &barTime,
@@ -654,10 +655,25 @@ func (b *Bot) onTradeSignal(ctx context.Context, result EntryResult, price provi
 		return
 	}
 
-	volume, err := b.riskMgr.PositionSizeForTier(b.getBalance(), result.SLPips, result.Tier)
-	if err != nil {
-		slog.Warn("position size error", "err", err)
-		return
+	var volume int64
+	if b.provider.Name() == "ctrader" {
+		// Fixed lot table: 100,000 API centi-units = 0.01 real lots on cTrader.
+		// c2-3 → 0.01, c4-5 → 0.02, c6-7 → 0.03 (hard cap).
+		switch {
+		case result.Confluence >= 6:
+			volume = 300_000
+		case result.Confluence >= 4:
+			volume = 200_000
+		default:
+			volume = 100_000
+		}
+	} else {
+		var sizeErr error
+		volume, sizeErr = b.riskMgr.PositionSizeForTier(b.getBalance(), result.SLPips, result.Tier)
+		if sizeErr != nil {
+			slog.Warn("position size error", "err", sizeErr)
+			return
+		}
 	}
 
 	if b.provider.Name() == "binance" {

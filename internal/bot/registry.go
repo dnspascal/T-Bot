@@ -5,7 +5,7 @@ import (
 	"time"
 )
 
-const maxTotalPositions = 4
+const maxTotalPositions = 1
 
 
 var maxPerTier = [4]int{4, 3, 2, 1}

@@ -14,6 +14,7 @@ type Signal struct {
 	Provider             string
 	Signal               string // BUY | SELL | HOLD
 	Confluence           int
+	Confidence           float64 // 0.0–1.0 weighted factor strength
 	ProcessingUS         int64
 	CheckedMarketStates  map[string]MarketStateSnapshot // keyed by period: "M5", "H1", etc.
 	BarTime              *time.Time

@@ -17,12 +17,12 @@ func New(db *pgxpool.Pool) *Repository {
 
 func (r *Repository) Insert(ctx context.Context, s Signal) (string, error) {
 	const q = `
-		INSERT INTO signals (symbol_id, provider, signal, confluence, processing_us, checked_market_states, bar_time)
-		VALUES ($1, $2, $3, $4, $5, $6, $7)
+		INSERT INTO signals (symbol_id, provider, signal, confluence, confidence, processing_us, checked_market_states, bar_time)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 		RETURNING id`
 	var id string
 	err := r.db.QueryRow(ctx, q,
-		s.SymbolID, s.Provider, s.Signal, s.Confluence, s.ProcessingUS, s.CheckedMarketStates, s.BarTime,
+		s.SymbolID, s.Provider, s.Signal, s.Confluence, s.Confidence, s.ProcessingUS, s.CheckedMarketStates, s.BarTime,
 	).Scan(&id)
 	if err != nil {
 		return "", fmt.Errorf("signal.Insert: %w", err)

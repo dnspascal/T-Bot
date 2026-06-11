@@ -60,7 +60,6 @@ func InitiateOAuthFlow(clientID, clientSecret, redirectURI string, callbackPort 
 	}
 }
 
-// ExchangeCode exchanges an authorization code for an access token and refresh token.
 func ExchangeCode(clientID, clientSecret, code, redirectURI string) (accessToken, refreshToken string, err error) {
 	resp, err := http.Get(fmt.Sprintf(
 		"https://openapi.ctrader.com/apps/token?grant_type=authorization_code&code=%s&redirect_uri=%s&client_id=%s&client_secret=%s",

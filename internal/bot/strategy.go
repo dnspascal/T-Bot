@@ -32,15 +32,16 @@ var rangeRequiredTFs = []string{"M15", "M30"}
 var rangeBonusTFs = []string{"H1", "H4"}
 
 type EntryResult struct {
-	Signal     string  
+	Signal     string
 	Confluence int
+	Confidence float64 // 0.0–1.0: weighted strength of all confirming factors
 	Tier       int
 	SLPrice    float64
 	TPPrice    float64
 	SLPips     float64
 	TPPips     float64
 	ATR        float64
-	Reason     string 
+	Reason     string
 }
 
 type rangeConfirmation struct {
@@ -101,15 +102,15 @@ func evaluateEntry(states map[string]indicator.MarketState, currentPrice float64
 	var rangeConf rangeConfirmation
 
 	switch {
-	case m5.Regime == "trending_up" && m5.RSI > rsiMidline:
+	case m5.Regime == "trending_up" && m5.RSI > rsiMidline && m5.RSI < rsiOverbought:
 		direction = "BUY"
-	case m5.Regime == "trending_down" && m5.RSI < rsiMidline:
+	case m5.Regime == "trending_down" && m5.RSI < rsiMidline && m5.RSI > rsiOversold:
 		direction = "SELL"
 
 	// Breakout: price broke the 20-bar range. Trade in the direction confirmed by EMA + RSI.
-	case m5.Regime == "breakout" && m5.EMAFast > m5.EMASlow && m5.RSI > rsiMidline:
+	case m5.Regime == "breakout" && m5.EMAFast > m5.EMASlow && m5.RSI > rsiMidline && m5.RSI < rsiOverbought:
 		direction = "BUY"
-	case m5.Regime == "breakout" && m5.EMAFast < m5.EMASlow && m5.RSI < rsiMidline:
+	case m5.Regime == "breakout" && m5.EMAFast < m5.EMASlow && m5.RSI < rsiMidline && m5.RSI > rsiOversold:
 		direction = "SELL"
 
 	case m5.Regime == "ranging":
@@ -183,6 +184,7 @@ func evaluateEntry(states map[string]indicator.MarketState, currentPrice float64
 	return EntryResult{
 		Signal:     direction,
 		Confluence: confluence,
+		Confidence: computeConfidence(m5, states, direction, slPips, tpPips),
 		Tier:       confluenceToTier(confluence),
 		SLPrice:    slPrice,
 		TPPrice:    tpPrice,
@@ -190,6 +192,56 @@ func evaluateEntry(states map[string]indicator.MarketState, currentPrice float64
 		TPPips:     tpPips,
 		ATR:        m5.ATR,
 	}
+}
+
+// computeConfidence scores 0.0–1.0 based on how strongly each factor confirms the signal.
+// It is independent of confluence count — two signals can share the same confluence
+// but differ in how convincingly those factors align.
+func computeConfidence(m5 indicator.MarketState, states map[string]indicator.MarketState, direction string, slPips, tpPips float64) float64 {
+	var score float64
+
+	// RSI distance from midline (0–20 points): RSI at 70 or 30 is max conviction.
+	rsiDev := m5.RSI - rsiMidline
+	if direction == "SELL" {
+		rsiDev = rsiMidline - m5.RSI
+	}
+	if rsiDev < 0 {
+		rsiDev = 0
+	}
+	score += min(rsiDev/20.0, 1.0) * 25 // max 25 points
+
+	// ADX trend strength (0–25 points): ADX 20 = weak, 40 = strong.
+	if m5.ADX > 0 {
+		score += min((m5.ADX-20)/20.0, 1.0) * 25
+	}
+
+	// EMA spread relative to ATR (0–20 points): measures how decisively fast crossed slow.
+	if m5.ATR > 0 {
+		spread := m5.EMAFast - m5.EMASlow
+		if direction == "SELL" {
+			spread = m5.EMASlow - m5.EMAFast
+		}
+		score += min(spread/(m5.ATR*2), 1.0) * 20
+	}
+
+	// Higher-timeframe agreement beyond M5 (0–20 points): 5 points per agreeing TF.
+	for _, tf := range confluenceTimeframes {
+		s, ok := states[tf]
+		if !ok || !s.IsWarmedUp {
+			continue
+		}
+		if direction == "BUY" && s.Regime == "trending_up" {
+			score += 5
+		} else if direction == "SELL" && s.Regime == "trending_down" {
+			score += 5
+		}
+	}
+
+	// Risk/reward quality (0–10 points): RR above minRR earns points up to 2×.
+	rr := tpPips / slPips
+	score += min((rr-minRR)/minRR, 1.0) * 10
+
+	return min(score/100.0, 1.0)
 }
 
 func confirmRange(m5 indicator.MarketState, states map[string]indicator.MarketState) rangeConfirmation {
