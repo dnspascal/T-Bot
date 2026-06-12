@@ -160,22 +160,18 @@ func startBotForProvider(
 		"startupMs", elapsed(botStart),
 	)
 
-	const maxReconnects = 5
 	backoff := 15 * time.Second
+	const maxBackoff = 5 * time.Minute
 
-	for attempt := 0; ; attempt++ {
+	for attempt := 1; ; attempt++ {
 		botResult.Bot.Run(ctx, botStart)
 
 		if ctx.Err() != nil {
 			return // graceful shutdown — don't retry
 		}
-		if attempt >= maxReconnects {
-			slog.Error("max reconnects reached — bot stopped", "provider", prov.Name())
-			return
-		}
 
 		slog.Warn("provider disconnected — reconnecting",
-			"provider", prov.Name(), "attempt", attempt+1, "backoff", backoff)
+			"provider", prov.Name(), "attempt", attempt, "backoff", backoff)
 
 		select {
 		case <-ctx.Done():
@@ -192,10 +188,14 @@ func startBotForProvider(
 		} else if err := prov.StartStreaming(); err != nil {
 			slog.Error("reconnect: StartStreaming failed", "provider", prov.Name(), "err", err)
 		} else {
-			slog.Info("reconnected", "provider", prov.Name(), "attempt", attempt+1)
+			slog.Info("reconnected", "provider", prov.Name(), "attempt", attempt)
 			backoff = 15 * time.Second // reset on success
 			botResult.Bot.Reset()
 			continue
+		}
+
+		if backoff < maxBackoff {
+			backoff *= 2
 		}
 
 		// One of the steps above failed — apply backoff and retry

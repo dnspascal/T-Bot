@@ -34,7 +34,7 @@ var rangeBonusTFs = []string{"H1", "H4"}
 type EntryResult struct {
 	Signal     string
 	Confluence int
-	Confidence float64 // 0.0–1.0: weighted strength of all confirming factors
+	Confidence float64 
 	Tier       int
 	SLPrice    float64
 	TPPrice    float64
