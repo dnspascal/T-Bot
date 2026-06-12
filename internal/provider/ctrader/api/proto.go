@@ -94,10 +94,10 @@ func encodeNewOrderReq(accountID, symbolID int64, side uint32, volume int64, sl,
 	b = appendInt64(b, 6, volume)
 
 	if sl > 0 {
-		b = appendInt64(b, 17, int64(sl*10)) // relativeStopLoss: pips × 10 = ticks from fill price
+		b = appendInt64(b, 19, int64(sl*10)) // relativeStopLoss in ticks (pips × 10)
 	}
 	if tp > 0 {
-		b = appendInt64(b, 18, int64(tp*10)) // relativeTakeProfit: pips × 10 = ticks from fill price
+		b = appendInt64(b, 20, int64(tp*10)) // relativeTakeProfit in ticks (pips × 10)
 	}
 	return b
 }
