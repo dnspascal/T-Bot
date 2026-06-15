@@ -22,6 +22,8 @@ type CTrader struct {
 	events    EventsRepo
 	snaps     SnapshotsRepo
 	execCh    chan provider.ExecutionEvent
+	priceCh   chan provider.PriceEvent
+	candleCh  chan provider.Candle
 }
 
 type EventsRepo interface {
@@ -34,15 +36,19 @@ type SnapshotsRepo interface {
 
 func New(cfg *config.Config, client *api.Client, db *pgxpool.Pool, events EventsRepo, snaps SnapshotsRepo) *CTrader {
 	c := &CTrader{
-		cfg:    cfg,
-		ctCfg:  cfg.CTrader,
-		client: client,
-		db:     db,
-		events: events,
-		snaps:  snaps,
-		execCh: make(chan provider.ExecutionEvent, 200),
+		cfg:      cfg,
+		ctCfg:    cfg.CTrader,
+		client:   client,
+		db:       db,
+		events:   events,
+		snaps:    snaps,
+		execCh:   make(chan provider.ExecutionEvent, 200),
+		priceCh:  make(chan provider.PriceEvent, 500),
+		candleCh: make(chan provider.Candle, 100),
 	}
 	go c.pipeExecEvents()
+	go c.pipePriceEvents()
+	go c.pipeCandleEvents()
 	return c
 }
 
@@ -488,22 +494,51 @@ func (c *CTrader) ValidateCredentials(ctx context.Context) error {
 }
 
 
-func (c *CTrader) PriceChan() <-chan provider.PriceEvent {
-	out := make(chan provider.PriceEvent, 100)
-	go func() {
-		for event := range c.client.PriceCh {
-			out <- provider.PriceEvent{
-				Bid:          event.Bid,
-				Ask:          event.Ask,
-				Mid:          event.Mid,
-				Symbol:       "",
-				ProviderName: c.Name(),
-				Timestamp:    event.Timestamp,
-			}
+func (c *CTrader) pipePriceEvents() {
+	for event := range c.client.PriceCh {
+		c.priceCh <- provider.PriceEvent{
+			Bid:          event.Bid,
+			Ask:          event.Ask,
+			Mid:          event.Mid,
+			Symbol:       "",
+			ProviderName: c.Name(),
+			Timestamp:    event.Timestamp,
 		}
-		close(out)
-	}()
-	return out
+	}
+}
+
+func (c *CTrader) pipeCandleEvents() {
+	type pendingBar struct {
+		openTime int64
+		candle   provider.Candle
+	}
+	pending := make(map[string]pendingBar)
+
+	for bar := range c.client.TrendbarCh {
+		period := api.PeriodToString(bar.Period)
+		if period == "UNKNOWN" {
+			slog.Warn("ctrader: trendbar with unknown period", "periodCode", bar.Period)
+			continue
+		}
+		current := provider.Candle{
+			Timeframe:  period,
+			OpenTime:   bar.OpenTime,
+			Open:       bar.Open,
+			High:       bar.High,
+			Low:        bar.Low,
+			Close:      bar.Close,
+			Volume:     bar.Volume,
+			ReceivedAt: time.Now(),
+		}
+		if prev, ok := pending[period]; ok && prev.openTime != bar.OpenTime {
+			c.candleCh <- prev.candle
+		}
+		pending[period] = pendingBar{openTime: bar.OpenTime, candle: current}
+	}
+}
+
+func (c *CTrader) PriceChan() <-chan provider.PriceEvent {
+	return c.priceCh
 }
 
 func (c *CTrader) ExecutionChan() <-chan provider.ExecutionEvent {
@@ -531,39 +566,7 @@ func (c *CTrader) OrderChan() <-chan provider.OrderEvent {
 }
 
 func (c *CTrader) CandleChan() <-chan provider.Candle {
-	out := make(chan provider.Candle, 100)
-	go func() {
-		type pendingBar struct {
-			openTime int64
-			candle   provider.Candle
-		}
-		pending := make(map[string]pendingBar)
-
-		for bar := range c.client.TrendbarCh {
-			period := api.PeriodToString(bar.Period)
-			if period == "UNKNOWN" {
-				slog.Warn("ctrader: trendbar with unknown period", "periodCode", bar.Period)
-				continue
-			}
-			current := provider.Candle{
-				Timeframe:  period,
-				OpenTime:   bar.OpenTime,
-				Open:       bar.Open,
-				High:       bar.High,
-				Low:        bar.Low,
-				Close:      bar.Close,
-				Volume:     bar.Volume,
-				ReceivedAt: time.Now(),
-			}
-
-			if prev, ok := pending[period]; ok && prev.openTime != bar.OpenTime {
-				out <- prev.candle
-			}
-			pending[period] = pendingBar{openTime: bar.OpenTime, candle: current}
-		}
-		close(out)
-	}()
-	return out
+	return c.candleCh
 }
 
 func (c *CTrader) DisconnectedChan() <-chan struct{} {

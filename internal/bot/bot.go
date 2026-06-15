@@ -67,7 +67,9 @@ type Bot struct {
 
 	pendingCloseReasons map[string]pendingClose
 
-	refresherOnce sync.Once
+	refresherOnce      sync.Once
+	tickWriterOnce     sync.Once
+	weekendCloserOnce  sync.Once
 
 	tickCh      chan tick.Tick
 	lastTickSaved time.Time    
@@ -139,9 +141,9 @@ func (b *Bot) Run(ctx context.Context, startedAt time.Time) {
 	b.reconcileOpenPositions(ctx)
 
 	b.refresherOnce.Do(func() { go b.tokenRefresher(ctx) })
-	go b.tickWriter(ctx)
+	b.tickWriterOnce.Do(func() { go b.tickWriter(ctx) })
 	if b.provider.Name() == "ctrader" {
-		go b.weekendPositionCloser(ctx)
+		b.weekendCloserOnce.Do(func() { go b.weekendPositionCloser(ctx) })
 	}
 
 	priceCh := b.provider.PriceChan()
