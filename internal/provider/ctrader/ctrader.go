@@ -21,6 +21,7 @@ type CTrader struct {
 	db        *pgxpool.Pool
 	events    EventsRepo
 	snaps     SnapshotsRepo
+	execCh    chan provider.ExecutionEvent
 }
 
 type EventsRepo interface {
@@ -32,13 +33,60 @@ type SnapshotsRepo interface {
 }
 
 func New(cfg *config.Config, client *api.Client, db *pgxpool.Pool, events EventsRepo, snaps SnapshotsRepo) *CTrader {
-	return &CTrader{
-		cfg:     cfg,
-		ctCfg:   cfg.CTrader,
-		client:  client,
-		db:      db,
-		events:  events,
-		snaps:   snaps,
+	c := &CTrader{
+		cfg:    cfg,
+		ctCfg:  cfg.CTrader,
+		client: client,
+		db:     db,
+		events: events,
+		snaps:  snaps,
+		execCh: make(chan provider.ExecutionEvent, 200),
+	}
+	go c.pipeExecEvents()
+	return c
+}
+
+func (c *CTrader) pipeExecEvents() {
+	for event := range c.client.ExecutionCh {
+		execEvent := provider.ExecutionEvent{
+			Type:         event.Type,
+			OrderID:      fmt.Sprintf("%d", event.Deal.OrderID),
+			ProviderName: c.Name(),
+			Timestamp:    event.Timestamp,
+			HasDeal:      event.HasDeal,
+			ErrorCode:    event.ErrorCode,
+		}
+		if event.ClosedPositionID != 0 {
+			execEvent.ClosedPositionID = fmt.Sprintf("%d", event.ClosedPositionID)
+		}
+		if event.HasDeal {
+			deal := event.Deal
+			execEvent.Deal = &provider.DealInfo{
+				DealID:         deal.DealID,
+				OrderID:        deal.OrderID,
+				PositionID:     deal.PositionID,
+				FilledVolume:   deal.FilledVolume,
+				Volume:         deal.Volume,
+				ExecutionPrice: deal.ExecutionPrice,
+				Commission:     deal.Commission,
+				TradeSide:      deal.TradeSide,
+				CreateTime:     deal.CreateTime,
+				ExecTime:       deal.ExecTime,
+				IsClose:        deal.IsClose,
+			}
+			if deal.IsClose {
+				execEvent.Deal.Close = &provider.CloseInfo{
+					ClosedVolume:     deal.Close.ClosedVolume,
+					EntryPrice:       deal.Close.EntryPrice,
+					GrossProfit:      deal.Close.GrossProfit,
+					Swap:             deal.Close.Swap,
+					Commission:       deal.Close.Commission,
+					Balance:          deal.Close.Balance,
+					PnLConversionFee: deal.Close.PnLConversionFee,
+				}
+			}
+		}
+		c.execCh <- execEvent
 	}
 }
 
@@ -459,52 +507,7 @@ func (c *CTrader) PriceChan() <-chan provider.PriceEvent {
 }
 
 func (c *CTrader) ExecutionChan() <-chan provider.ExecutionEvent {
-	out := make(chan provider.ExecutionEvent, 100)
-	go func() {
-		for event := range c.client.ExecutionCh {
-			execEvent := provider.ExecutionEvent{
-				Type:         event.Type,
-				OrderID:      fmt.Sprintf("%d", event.Deal.OrderID),
-				ProviderName: c.Name(),
-				Timestamp:    event.Timestamp,
-				HasDeal:      event.HasDeal,
-				ErrorCode:    event.ErrorCode,
-			}
-			if event.ClosedPositionID != 0 {
-				execEvent.ClosedPositionID = fmt.Sprintf("%d", event.ClosedPositionID)
-			}
-			if event.HasDeal {
-				deal := event.Deal
-				execEvent.Deal = &provider.DealInfo{
-					DealID:         deal.DealID,
-					OrderID:        deal.OrderID,
-					PositionID:     deal.PositionID,
-					FilledVolume:   deal.FilledVolume,
-					Volume:         deal.Volume,
-					ExecutionPrice: deal.ExecutionPrice,
-					Commission:     deal.Commission,
-					TradeSide:      deal.TradeSide,
-					CreateTime:     deal.CreateTime,
-					ExecTime:       deal.ExecTime,
-					IsClose:        deal.IsClose,
-				}
-				if deal.IsClose {
-					execEvent.Deal.Close = &provider.CloseInfo{
-						ClosedVolume:     deal.Close.ClosedVolume,
-						EntryPrice:       deal.Close.EntryPrice,
-						GrossProfit:      deal.Close.GrossProfit,
-						Swap:             deal.Close.Swap,
-						Commission:       deal.Close.Commission,
-						Balance:          deal.Close.Balance,
-						PnLConversionFee: deal.Close.PnLConversionFee,
-					}
-				}
-			}
-			out <- execEvent
-		}
-		close(out)
-	}()
-	return out
+	return c.execCh
 }
 
 func (c *CTrader) OrderChan() <-chan provider.OrderEvent {
