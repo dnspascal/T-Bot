@@ -67,7 +67,9 @@ type Bot struct {
 
 	pendingCloseReasons map[string]pendingClose
 
-	tickCh      chan tick.Tick 
+	refresherOnce sync.Once
+
+	tickCh      chan tick.Tick
 	lastTickSaved time.Time    
 
 	db        *pgxpool.Pool
@@ -136,7 +138,7 @@ func New(
 func (b *Bot) Run(ctx context.Context, startedAt time.Time) {
 	b.reconcileOpenPositions(ctx)
 
-	go b.tokenRefresher(ctx)
+	b.refresherOnce.Do(func() { go b.tokenRefresher(ctx) })
 	go b.tickWriter(ctx)
 	if b.provider.Name() == "ctrader" {
 		go b.weekendPositionCloser(ctx)
