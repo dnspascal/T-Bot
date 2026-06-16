@@ -100,32 +100,50 @@ func evaluateEntry(states map[string]indicator.MarketState, currentPrice float64
 	var direction string
 	var isRanging bool
 	var rangeConf rangeConfirmation
+	var rangeATR = m5.ATR // ATR for range SL/TP; overridden to M15 ATR on higher-TF path
 
-	switch {
-	case m5.Regime == "trending_up" && m5.RSI > rsiMidline && m5.RSI < rsiOverbought:
-		direction = "BUY"
-	case m5.Regime == "trending_down" && m5.RSI < rsiMidline && m5.RSI > rsiOversold:
-		direction = "SELL"
-
-	// Breakout: price broke the 20-bar range. Trade in the direction confirmed by EMA + RSI.
-	case m5.Regime == "breakout" && m5.EMAFast > m5.EMASlow && m5.RSI > rsiMidline && m5.RSI < rsiOverbought:
-		direction = "BUY"
-	case m5.Regime == "breakout" && m5.EMAFast < m5.EMASlow && m5.RSI < rsiMidline && m5.RSI > rsiOversold:
-		direction = "SELL"
-
-	case m5.Regime == "ranging":
-		rangeConf = confirmRange(m5, states)
-		if !rangeConf.confirmed {
-			return hold("ranging: not confirmed across timeframes or S/R unstable")
+	// When M5 is not ranging, check if M15+M30 both define a clear range.
+	// If so, trade the range using M15/M30 S/R — the M5 trend is just walking into a wall.
+	if m5.Regime != "ranging" {
+		if htfConf, htfAnchor, ok := confirmHigherTFRange(states); ok {
+			dir := rangingDirection(htfAnchor, htfConf, currentPrice)
+			if dir == "" {
+				return hold("M15+M30 ranging: price not near S/R or RSI not confirming")
+			}
+			direction = dir
+			rangeConf = htfConf
+			isRanging = true
+			rangeATR = htfAnchor.ATR
 		}
-		direction = rangingDirection(m5, rangeConf, currentPrice)
-		if direction == "" {
-			return hold("ranging: price not near confirmed S/R or RSI not confirming")
-		}
-		isRanging = true
+	}
 
-	default:
-		return hold("no M5 trend trigger")
+	if !isRanging {
+		switch {
+		case m5.Regime == "trending_up" && m5.RSI > rsiMidline && m5.RSI < rsiOverbought:
+			direction = "BUY"
+		case m5.Regime == "trending_down" && m5.RSI < rsiMidline && m5.RSI > rsiOversold:
+			direction = "SELL"
+
+		// Breakout: price broke the 20-bar range. Trade in the direction confirmed by EMA + RSI.
+		case m5.Regime == "breakout" && m5.EMAFast > m5.EMASlow && m5.RSI > rsiMidline && m5.RSI < rsiOverbought:
+			direction = "BUY"
+		case m5.Regime == "breakout" && m5.EMAFast < m5.EMASlow && m5.RSI < rsiMidline && m5.RSI > rsiOversold:
+			direction = "SELL"
+
+		case m5.Regime == "ranging":
+			rangeConf = confirmRange(m5, states)
+			if !rangeConf.confirmed {
+				return hold("ranging: not confirmed across timeframes or S/R unstable")
+			}
+			direction = rangingDirection(m5, rangeConf, currentPrice)
+			if direction == "" {
+				return hold("ranging: price not near confirmed S/R or RSI not confirming")
+			}
+			isRanging = true
+
+		default:
+			return hold("no M5 trend trigger")
+		}
 	}
 
 
@@ -164,7 +182,7 @@ func evaluateEntry(states map[string]indicator.MarketState, currentPrice float64
 
 	var slPrice, tpPrice float64
 	if isRanging {
-		slPrice, tpPrice = computeRangeSLTP(rangeConf, direction, currentPrice, m5.ATR)
+		slPrice, tpPrice = computeRangeSLTP(rangeConf, direction, currentPrice, rangeATR)
 	} else {
 		slPrice, tpPrice = computeSLTP(m5, direction, currentPrice)
 	}
@@ -200,7 +218,8 @@ func evaluateEntry(states map[string]indicator.MarketState, currentPrice float64
 func computeConfidence(m5 indicator.MarketState, states map[string]indicator.MarketState, direction string, slPips, tpPips float64) float64 {
 	var score float64
 
-	// RSI distance from midline (0–20 points): RSI at 70 or 30 is max conviction.
+	// RSI distance from midline (0–25 points): exhaustion filter caps RSI at 40–60, so max
+	// deviation from midline is 10, not 20. Divide by 10 so the component scales properly.
 	rsiDev := m5.RSI - rsiMidline
 	if direction == "SELL" {
 		rsiDev = rsiMidline - m5.RSI
@@ -208,7 +227,7 @@ func computeConfidence(m5 indicator.MarketState, states map[string]indicator.Mar
 	if rsiDev < 0 {
 		rsiDev = 0
 	}
-	score += min(rsiDev/20.0, 1.0) * 25 // max 25 points
+	score += min(rsiDev/10.0, 1.0) * 25 // max 25 points
 
 	// ADX trend strength (0–25 points): ADX 20 = weak, 40 = strong.
 	if m5.ADX > 0 {
@@ -299,6 +318,55 @@ func confirmRange(m5 indicator.MarketState, states map[string]indicator.MarketSt
 		consensusResistance: consensusResistance,
 		bonusTFs:            bonusTFs,
 	}
+}
+
+// confirmHigherTFRange checks if M15+M30 both define a clear range, regardless of M5 regime.
+// Returns the range confirmation, M15 as the anchor state (for RSI/ATR checks), and whether confirmed.
+// H1 and H4 are counted as bonus TFs if they are also ranging and agree on S/R levels.
+func confirmHigherTFRange(states map[string]indicator.MarketState) (rangeConfirmation, indicator.MarketState, bool) {
+	m15, ok := states["M15"]
+	if !ok || !m15.IsWarmedUp || m15.Regime != "ranging" || m15.SupportLevel <= 0 || m15.ResistanceLevel <= 0 || m15.ATR <= 0 {
+		return rangeConfirmation{}, indicator.MarketState{}, false
+	}
+	m30, ok := states["M30"]
+	if !ok || !m30.IsWarmedUp || m30.Regime != "ranging" || m30.SupportLevel <= 0 || m30.ResistanceLevel <= 0 {
+		return rangeConfirmation{}, indicator.MarketState{}, false
+	}
+
+	supports := []float64{m15.SupportLevel, m30.SupportLevel}
+	resistances := []float64{m15.ResistanceLevel, m30.ResistanceLevel}
+
+	bonusTFs := 0
+	for _, tf := range rangeBonusTFs {
+		s, ok := states[tf]
+		if !ok || !s.IsWarmedUp || s.Regime != "ranging" || s.SupportLevel <= 0 || s.ResistanceLevel <= 0 {
+			continue
+		}
+		supports = append(supports, s.SupportLevel)
+		resistances = append(resistances, s.ResistanceLevel)
+		bonusTFs++
+	}
+
+	tolerance := srStabilityMult * m15.ATR
+	if slices.Max(supports)-slices.Min(supports) > tolerance {
+		return rangeConfirmation{}, indicator.MarketState{}, false
+	}
+	if slices.Max(resistances)-slices.Min(resistances) > tolerance {
+		return rangeConfirmation{}, indicator.MarketState{}, false
+	}
+
+	consensusSupport := slices.Max(supports)
+	consensusResistance := slices.Min(resistances)
+	if consensusResistance <= consensusSupport {
+		return rangeConfirmation{}, indicator.MarketState{}, false
+	}
+
+	return rangeConfirmation{
+		confirmed:           true,
+		consensusSupport:    consensusSupport,
+		consensusResistance: consensusResistance,
+		bonusTFs:            bonusTFs,
+	}, m15, true
 }
 
 func rangingDirection(m5 indicator.MarketState, rc rangeConfirmation, price float64) string {

@@ -100,9 +100,6 @@ func (c *Connection) readLoop() {
 		}
 
 		pType := payloadTypeOf(buf)
-		if pType == 2105 {
-			slog.Info("ProtoOATraderRes full buf", "hex", fmt.Sprintf("%x", buf))
-		}
 		payload := payloadOf(buf)
 		c.handler(pType, payload)
 	}

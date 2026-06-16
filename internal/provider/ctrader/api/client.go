@@ -263,7 +263,6 @@ func (c *Client) handleMessage(payloadType uint32, payload []byte) {
 		}
 
 	case ProtoOATraderRes:
-		slog.Info("ProtoOATraderRes raw", "hex", fmt.Sprintf("%x", payload))
 		if info, ok := decodeTraderRes(payload); ok {
 			slog.Info("account info received",
 				"balance", info.Balance,
