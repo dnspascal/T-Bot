@@ -5,8 +5,10 @@ import (
 	"time"
 )
 
-const maxTotalPositions = 3
-
+const (
+	maxTotalPositions = 3
+	minScaleInPips    = 3 // existing position must be this many pips in profit before adding another
+)
 
 var maxPerTier = [4]int{4, 3, 2, 1}
 
@@ -47,11 +49,11 @@ func (r *PositionRegistry) CanOpen(tier int, side string, currentPrice float64) 
 		if p.Side != side {
 			return false, "conflicting direction — opposite position still open"
 		}
-		// Only scale in when every existing position is already in profit.
-		if p.Side == "BUY" && currentPrice <= p.OpenPrice {
+		minDist := minScaleInPips * pipSize
+		if p.Side == "BUY" && currentPrice < p.OpenPrice+minDist {
 			return false, "existing BUY not yet in profit"
 		}
-		if p.Side == "SELL" && currentPrice >= p.OpenPrice {
+		if p.Side == "SELL" && currentPrice > p.OpenPrice-minDist {
 			return false, "existing SELL not yet in profit"
 		}
 		if p.Tier == tier {

@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/binary"
+	"log/slog"
 	"math"
 	"time"
 )
@@ -363,6 +364,7 @@ func decodeTraderRes(data []byte) (TraderInfo, bool) {
 		return TraderInfo{}, false
 	}
 	info.Balance = float64(rawBalance) / math.Pow(10, float64(moneyDigits))
+	slog.Info("decodeTraderRes", "rawBalance", rawBalance, "moneyDigits", moneyDigits, "balance", info.Balance, "leverage", info.Leverage)
 	return info, true
 }
 
