@@ -33,7 +33,7 @@ func newPositionRegistry() *PositionRegistry {
 	return &PositionRegistry{positions: make(map[string]*trackedPosition)}
 }
 
-func (r *PositionRegistry) CanOpen(tier int, side string) (bool, string) {
+func (r *PositionRegistry) CanOpen(tier int, side string, currentPrice float64) (bool, string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if len(r.positions) >= maxTotalPositions {
@@ -46,6 +46,13 @@ func (r *PositionRegistry) CanOpen(tier int, side string) (bool, string) {
 	for _, p := range r.positions {
 		if p.Side != side {
 			return false, "conflicting direction — opposite position still open"
+		}
+		// Only scale in when every existing position is already in profit.
+		if p.Side == "BUY" && currentPrice <= p.OpenPrice {
+			return false, "existing BUY not yet in profit"
+		}
+		if p.Side == "SELL" && currentPrice >= p.OpenPrice {
+			return false, "existing SELL not yet in profit"
 		}
 		if p.Tier == tier {
 			count++
