@@ -100,10 +100,8 @@ func evaluateEntry(states map[string]indicator.MarketState, currentPrice float64
 	var direction string
 	var isRanging bool
 	var rangeConf rangeConfirmation
-	var rangeATR = m5.ATR // ATR for range SL/TP; overridden to M15 ATR on higher-TF path
+	var rangeATR = m5.ATR 
 
-	// When M5 is not ranging, check if M15+M30 both define a clear range.
-	// If so, trade the range using M15/M30 S/R — the M5 trend is just walking into a wall.
 	if m5.Regime != "ranging" {
 		if htfConf, htfAnchor, ok := confirmHigherTFRange(states); ok {
 			dir := rangingDirection(htfAnchor, htfConf, currentPrice)
@@ -212,14 +210,10 @@ func evaluateEntry(states map[string]indicator.MarketState, currentPrice float64
 	}
 }
 
-// computeConfidence scores 0.0–1.0 based on how strongly each factor confirms the signal.
-// It is independent of confluence count — two signals can share the same confluence
-// but differ in how convincingly those factors align.
+
 func computeConfidence(m5 indicator.MarketState, states map[string]indicator.MarketState, direction string, slPips, tpPips float64) float64 {
 	var score float64
 
-	// RSI distance from midline (0–25 points): exhaustion filter caps RSI at 40–60, so max
-	// deviation from midline is 10, not 20. Divide by 10 so the component scales properly.
 	rsiDev := m5.RSI - rsiMidline
 	if direction == "SELL" {
 		rsiDev = rsiMidline - m5.RSI
@@ -229,12 +223,10 @@ func computeConfidence(m5 indicator.MarketState, states map[string]indicator.Mar
 	}
 	score += min(rsiDev/10.0, 1.0) * 25 // max 25 points
 
-	// ADX trend strength (0–25 points): ADX 20 = weak, 40 = strong.
 	if m5.ADX > 0 {
 		score += min((m5.ADX-20)/20.0, 1.0) * 25
 	}
 
-	// EMA spread relative to ATR (0–20 points): measures how decisively fast crossed slow.
 	if m5.ATR > 0 {
 		spread := m5.EMAFast - m5.EMASlow
 		if direction == "SELL" {
@@ -243,7 +235,6 @@ func computeConfidence(m5 indicator.MarketState, states map[string]indicator.Mar
 		score += min(spread/(m5.ATR*2), 1.0) * 20
 	}
 
-	// Higher-timeframe agreement beyond M5 (0–20 points): 5 points per agreeing TF.
 	for _, tf := range confluenceTimeframes {
 		s, ok := states[tf]
 		if !ok || !s.IsWarmedUp {
@@ -256,7 +247,6 @@ func computeConfidence(m5 indicator.MarketState, states map[string]indicator.Mar
 		}
 	}
 
-	// Risk/reward quality (0–10 points): RR above minRR earns points up to 2×.
 	rr := tpPips / slPips
 	score += min((rr-minRR)/minRR, 1.0) * 10
 
@@ -320,9 +310,7 @@ func confirmRange(m5 indicator.MarketState, states map[string]indicator.MarketSt
 	}
 }
 
-// confirmHigherTFRange checks if M15+M30 both define a clear range, regardless of M5 regime.
-// Returns the range confirmation, M15 as the anchor state (for RSI/ATR checks), and whether confirmed.
-// H1 and H4 are counted as bonus TFs if they are also ranging and agree on S/R levels.
+
 func confirmHigherTFRange(states map[string]indicator.MarketState) (rangeConfirmation, indicator.MarketState, bool) {
 	m15, ok := states["M15"]
 	if !ok || !m15.IsWarmedUp || m15.Regime != "ranging" || m15.SupportLevel <= 0 || m15.ResistanceLevel <= 0 || m15.ATR <= 0 {
