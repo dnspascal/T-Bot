@@ -605,6 +605,7 @@ func (b *Bot) onExecution(ctx context.Context, exec provider.ExecutionEvent) {
 				b.balance = exec.Deal.Close.Balance
 				b.balanceMu.Unlock()
 				slog.Info("balance updated from close fill", "balance", exec.Deal.Close.Balance)
+				go b.provider.SaveBalanceSnapshot(ctx, exec.Deal.Close.Balance)
 			} else {
 				go b.refreshBalance()
 			}

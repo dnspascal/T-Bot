@@ -179,6 +179,8 @@ type Provider interface {
 	GetCredentialStatus(ctx context.Context) (*CredentialStatus, error)
 	ValidateCredentials(ctx context.Context) error
 
+	SaveBalanceSnapshot(ctx context.Context, balance float64)
+
 	// === EVENT STREAMS ===
 	PriceChan() <-chan PriceEvent
 	ExecutionChan() <-chan ExecutionEvent

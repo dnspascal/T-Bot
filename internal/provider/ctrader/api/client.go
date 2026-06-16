@@ -94,6 +94,10 @@ func (c *Client) SetAccountID(id int64) {
 	c.accountID = id
 }
 
+func (c *Client) AccountID() int64 {
+	return c.accountID
+}
+
 func (c *Client) AuthApp(clientID, clientSecret string) error {
 	return c.conn.SendRaw(ProtoOAApplicationAuthReq,
 		encodeAppAuthReq(clientID, clientSecret))

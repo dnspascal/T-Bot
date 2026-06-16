@@ -32,6 +32,7 @@ type EventsRepo interface {
 
 type SnapshotsRepo interface {
 	Insert(context.Context, snapshot.Snapshot) error
+	Latest(context.Context, string, string) (*snapshot.Snapshot, error)
 }
 
 func New(cfg *config.Config, client *api.Client, db *pgxpool.Pool, events EventsRepo, snaps SnapshotsRepo) *CTrader {
@@ -192,9 +193,15 @@ func (c *CTrader) Auth(ctx context.Context) (*provider.AuthResult, error) {
 		traderInfo.BrokerName = accountBrokerName
 	}
 	balance := traderInfo.Balance
-	if balance <= 0 && c.ctCfg.InitialBalance > 0 {
-		balance = c.ctCfg.InitialBalance
-		slog.Info("ProtoOATraderRes returned no balance — using CTRADER_INITIAL_BALANCE", "balance", balance)
+	if balance <= 0 {
+		provAcctID := fmt.Sprintf("%d", ctidAccountID)
+		if latest, err := c.snaps.Latest(ctx, "ctrader", provAcctID); err == nil && latest.Balance > 0 {
+			balance = latest.Balance
+			slog.Info("ProtoOATraderRes returned no balance — using latest DB snapshot", "balance", balance)
+		} else if c.ctCfg.InitialBalance > 0 {
+			balance = c.ctCfg.InitialBalance
+			slog.Info("ProtoOATraderRes returned no balance — using CTRADER_INITIAL_BALANCE", "balance", balance)
+		}
 	}
 	leverage := traderInfo.Leverage
 	maxLeverage := traderInfo.MaxLeverage
@@ -571,6 +578,21 @@ func (c *CTrader) CandleChan() <-chan provider.Candle {
 
 func (c *CTrader) DisconnectedChan() <-chan struct{} {
 	return c.client.Dead()
+}
+
+func (c *CTrader) SaveBalanceSnapshot(ctx context.Context, balance float64) {
+	provAcctID := fmt.Sprintf("%d", c.client.AccountID())
+	trigger := "post_trade"
+	err := c.snaps.Insert(ctx, snapshot.Snapshot{
+		Provider:       "ctrader",
+		ProviderAcctID: provAcctID,
+		Balance:        balance,
+		Trigger:        &trigger,
+		SnapshottedAt:  time.Now(),
+	})
+	if err != nil {
+		slog.Error("SaveBalanceSnapshot failed", "err", err)
+	}
 }
 
 

@@ -438,6 +438,8 @@ func (b *Binance) DisconnectedChan() <-chan struct{} {
 	return b.disconnectedCh
 }
 
+func (b *Binance) SaveBalanceSnapshot(_ context.Context, _ float64) {}
+
 
 func (b *Binance) forwardPriceEvents() {
 	for price := range b.wsClient.PriceChan() {
