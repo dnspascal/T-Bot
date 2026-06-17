@@ -14,15 +14,16 @@ const (
 	TierVeryStrong = 3 
 
 	rsiMidline      = 50.0
-	rsiOversold     = 40.0 
-	rsiOverbought   = 60.0 
-	srProximityMult = 1.5  
-	srStabilityMult = 1.5  
+	rsiOversold     = 40.0
+	rsiOverbought   = 60.0
+	srProximityMult = 1.5
+	srStabilityMult = 1.5
 	slATRMult       = 1.5
 	tpATRMult       = 2.5
-	slRangeBuffer   = 0.25 
-	tpRangeBuffer   = 0.15 
-	minRR           = 1.5 
+	slRangeBuffer   = 0.25
+	tpRangeBuffer   = 0.15
+	minRR           = 1.5
+	minATRPips      = 3.0 // M5 ATR below this means spread eats the SL — skip the trade
 )
 
 var confluenceTimeframes = []string{"M15", "M30", "H1", "H4"}
@@ -95,6 +96,9 @@ func evaluateEntry(states map[string]indicator.MarketState, currentPrice float64
 	}
 	if !inActiveSession(londonNYOnly) {
 		return hold("outside active session")
+	}
+	if m5.ATR/pipSize < minATRPips {
+		return hold("M5 ATR too small — spread would eat SL")
 	}
 
 	var direction string
