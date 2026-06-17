@@ -7,7 +7,7 @@ import (
 
 const (
 	maxTotalPositions = 3
-	minScaleInPips    = 3 // existing position must be this many pips in profit before adding another
+	minScaleInPips    = 2 // existing position must be this many pips in profit before adding another
 )
 
 var maxPerTier = [4]int{4, 3, 2, 1}

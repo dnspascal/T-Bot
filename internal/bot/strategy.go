@@ -97,14 +97,11 @@ func evaluateEntry(states map[string]indicator.MarketState, currentPrice float64
 	if !inActiveSession(londonNYOnly) {
 		return hold("outside active session")
 	}
-	if m5.ATR/pipSize < minATRPips {
-		return hold("M5 ATR too small — spread would eat SL")
-	}
 
 	var direction string
 	var isRanging bool
 	var rangeConf rangeConfirmation
-	var rangeATR = m5.ATR 
+	var rangeATR = m5.ATR
 
 	if m5.Regime != "ranging" {
 		if htfConf, htfAnchor, ok := confirmHigherTFRange(states); ok {
@@ -148,8 +145,19 @@ func evaluateEntry(states map[string]indicator.MarketState, currentPrice float64
 		}
 	}
 
+	// ATR check is regime-aware: ranging trades use M15 ATR for SL/TP so check that;
+	// trending/breakout use M5 ATR so check that instead.
+	if isRanging {
+		if m15, ok := states["M15"]; ok && m15.ATR/pipSize < minATRPips {
+			return hold("M15 ATR too small for ranging SL/TP")
+		}
+	} else {
+		if m5.ATR/pipSize < minATRPips {
+			return hold("M5 ATR too small — spread would eat SL")
+		}
+	}
 
-	confluence := 1 
+	confluence := 1
 
 	if isRanging {
 		confluence += rangeConf.bonusTFs
