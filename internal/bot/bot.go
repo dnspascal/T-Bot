@@ -797,7 +797,7 @@ func (b *Bot) recordOpenFill(ctx context.Context, exec provider.ExecutionEvent) 
 	}
 
 	openTime := deal.ExecTime
-	if err := b.positions.Upsert(ctx, position.Position{
+	posUUID, err := b.positions.Upsert(ctx, position.Position{
 		OurOrderID:         &b.pendingOrderID,
 		Provider:           b.provider.Name(),
 		ProviderPositionID: provPosID,
@@ -807,9 +807,12 @@ func (b *Bot) recordOpenFill(ctx context.Context, exec provider.ExecutionEvent) 
 		Volume:             deal.FilledVolume,
 		Tier:               b.pendingTier,
 		OpenPrice:          &deal.ExecutionPrice,
+		CurrentSL:          &b.pendingSLPrice,
+		CurrentTP:          &b.pendingTPPrice,
 		Status:             "open",
 		OpenTimestamp:      &openTime,
-	}); err != nil {
+	})
+	if err != nil {
 		slog.Error("positions.Upsert (open) failed", "err", err)
 	}
 
@@ -828,7 +831,7 @@ func (b *Bot) recordOpenFill(ctx context.Context, exec provider.ExecutionEvent) 
 	volume := deal.Volume
 	filledVolume := deal.FilledVolume
 	commission := deal.Commission
-	if err := b.fills.Insert(ctx, fill.Fill{
+	openFill := fill.Fill{
 		OurOrderID:         &b.pendingOrderID,
 		Provider:           b.provider.Name(),
 		ProviderFillID:     fmt.Sprintf("%d", deal.DealID),
@@ -844,7 +847,11 @@ func (b *Bot) recordOpenFill(ctx context.Context, exec provider.ExecutionEvent) 
 		ProviderCreateTime: &deal.CreateTime,
 		ProviderExecTime:   &deal.ExecTime,
 		ReceivedAt:         exec.Timestamp,
-	}); err != nil {
+	}
+	if posUUID != "" {
+		openFill.OurPositionID = &posUUID
+	}
+	if err := b.fills.Insert(ctx, openFill); err != nil {
 		slog.Error("fills.Insert (open) failed", "err", err)
 	}
 
@@ -872,9 +879,11 @@ func (b *Bot) recordCloseFill(ctx context.Context, exec provider.ExecutionEvent)
 
 	var maxFav, maxAdv *float64
 	var closeReason *string
+	var openTime time.Time
 	if tracked, ok := b.registry.Get(provPosID); ok {
 		maxFav = &tracked.MaxFavorable
 		maxAdv = &tracked.MaxAdverse
+		openTime = tracked.OpenTime
 	}
 	if pc, ok := b.pendingCloseReasons[provPosID]; ok {
 		closeReason = &pc.reason
@@ -887,6 +896,14 @@ func (b *Bot) recordCloseFill(ctx context.Context, exec provider.ExecutionEvent)
 
 	if err := b.positions.Close(ctx, b.provider.Name(), provPosID, deal.ExecTime, maxFav, maxAdv); err != nil {
 		slog.Error("positions.Close failed", "err", err)
+	}
+
+	posUUID, _ := b.positions.IDByProviderPositionID(ctx, b.provider.Name(), provPosID)
+
+	var durationMs *int64
+	if !openTime.IsZero() {
+		d := deal.ExecTime.Sub(openTime).Milliseconds()
+		durationMs = &d
 	}
 
 	closeSide := "SELL"
@@ -904,7 +921,7 @@ func (b *Bot) recordCloseFill(ctx context.Context, exec provider.ExecutionEvent)
 	pnlFee := cl.PnLConversionFee
 	dealCommission := deal.Commission
 
-	if err := b.fills.Insert(ctx, fill.Fill{
+	closeFill := fill.Fill{
 		Provider:           b.provider.Name(),
 		ProviderFillID:     fmt.Sprintf("%d", deal.DealID),
 		ProviderOrderID:    &provOrderID,
@@ -923,11 +940,16 @@ func (b *Bot) recordCloseFill(ctx context.Context, exec provider.ExecutionEvent)
 		BalanceAfter:       &balanceAfter,
 		ClosedVolume:       &closedVolume,
 		PnLConversionFee:   &pnlFee,
+		TradeDurationMs:    durationMs,
 		CloseReason:        closeReason,
 		ProviderCreateTime: &deal.CreateTime,
 		ProviderExecTime:   &deal.ExecTime,
 		ReceivedAt:         exec.Timestamp,
-	}); err != nil {
+	}
+	if posUUID != "" {
+		closeFill.OurPositionID = &posUUID
+	}
+	if err := b.fills.Insert(ctx, closeFill); err != nil {
 		slog.Error("fills.Insert (close) failed", "err", err)
 	}
 
@@ -968,12 +990,15 @@ func (b *Bot) recordBrokerClose(ctx context.Context, exec provider.ExecutionEven
 		slog.Error("recordBrokerClose: positions.Close failed", "posID", posID, "err", err)
 	}
 
+	posUUID, _ := b.positions.IDByProviderPositionID(ctx, b.provider.Name(), posID)
+
 	mid := b.currentPrice.Mid
 	if mid == 0 {
 		mid = (b.currentPrice.Bid + b.currentPrice.Ask) / 2
 	}
 
 	var estimatedPnL float64
+	var durationMs *int64
 	closeSide := "SELL"
 	if hasTracked {
 		if tracked.Side == "BUY" {
@@ -986,10 +1011,14 @@ func (b *Bot) recordBrokerClose(ctx context.Context, exec provider.ExecutionEven
 		if closeReason == "" {
 			closeReason = inferCloseReason(estimatedPnL)
 		}
+		if !tracked.OpenTime.IsZero() {
+			d := exec.Timestamp.Sub(tracked.OpenTime).Milliseconds()
+			durationMs = &d
+		}
 	}
 
 	fillID := fmt.Sprintf("broker_%s_%d", posID, exec.Timestamp.UnixMilli())
-	if err := b.fills.Insert(ctx, fill.Fill{
+	brokerFill := fill.Fill{
 		Provider:           b.provider.Name(),
 		ProviderFillID:     fillID,
 		ProviderPositionID: &posID,
@@ -999,8 +1028,13 @@ func (b *Bot) recordBrokerClose(ctx context.Context, exec provider.ExecutionEven
 		EventType:          "close",
 		CloseReason:        &closeReason,
 		GrossProfit:        &estimatedPnL,
+		TradeDurationMs:    durationMs,
 		ReceivedAt:         exec.Timestamp,
-	}); err != nil {
+	}
+	if posUUID != "" {
+		brokerFill.OurPositionID = &posUUID
+	}
+	if err := b.fills.Insert(ctx, brokerFill); err != nil {
 		slog.Error("recordBrokerClose: fills.Insert failed", "posID", posID, "err", err)
 	}
 

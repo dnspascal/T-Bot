@@ -97,6 +97,9 @@ func evaluateEntry(states map[string]indicator.MarketState, currentPrice float64
 	if !inActiveSession(londonNYOnly) {
 		return hold("outside active session")
 	}
+	if isEODWindow() {
+		return hold("EOD window — no new entries before dead session")
+	}
 
 	var direction string
 	var isRanging bool

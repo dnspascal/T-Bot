@@ -16,7 +16,7 @@ func New(db *pgxpool.Pool) *Repository {
 	return &Repository{db: db}
 }
 
-func (r *Repository) Upsert(ctx context.Context, p Position) error {
+func (r *Repository) Upsert(ctx context.Context, p Position) (string, error) {
 	const q = `
 		INSERT INTO positions
 			(our_order_id, provider, provider_position_id, provider_acct_id, symbol_id, side, volume,
@@ -36,17 +36,31 @@ func (r *Repository) Upsert(ctx context.Context, p Position) error {
 			trailing_stop_loss   = EXCLUDED.trailing_stop_loss,
 			close_timestamp      = EXCLUDED.close_timestamp,
 			raw_payload          = EXCLUDED.raw_payload,
-			updated_at           = NOW()`
-	_, err := r.db.Exec(ctx, q,
+			updated_at           = NOW()
+		RETURNING id`
+	var id string
+	err := r.db.QueryRow(ctx, q,
 		p.OurOrderID, p.Provider, p.ProviderPositionID, p.ProviderAcctID, p.SymbolID, p.Side, p.Volume,
 		p.Tier, p.OpenPrice, p.CurrentSL, p.CurrentTP, p.Swap, p.Commission, p.UsedMargin,
 		p.Status, p.TrailingStopLoss, p.GuaranteedStopLoss, p.Label, p.Comment,
 		p.OpenTimestamp, p.CloseTimestamp, p.RawPayload,
-	)
+	).Scan(&id)
 	if err != nil {
-		return fmt.Errorf("position.Upsert: %w", err)
+		return "", fmt.Errorf("position.Upsert: %w", err)
 	}
-	return nil
+	return id, nil
+}
+
+func (r *Repository) IDByProviderPositionID(ctx context.Context, provider, providerPositionID string) (string, error) {
+	var id string
+	err := r.db.QueryRow(ctx,
+		`SELECT id FROM positions WHERE provider = $1 AND provider_position_id = $2`,
+		provider, providerPositionID,
+	).Scan(&id)
+	if err != nil {
+		return "", fmt.Errorf("position.IDByProviderPositionID: %w", err)
+	}
+	return id, nil
 }
 
 // Close marks a position as closed and writes the high-water marks tracked during its life.

@@ -16,7 +16,26 @@ const signalsToClose = 3
 
 const signalsToReduce = 2
 
+func isEODWindow() bool {
+	now := time.Now().UTC()
+	return now.Hour() == 21 && now.Minute() >= 30
+}
+
 func (b *Bot) watchPositions(ctx context.Context, ms indicator.MarketState) {
+	if isEODWindow() {
+		for _, pos := range b.registry.All() {
+			if _, pending := b.pendingCloseReasons[pos.ProviderPositionID]; pending {
+				continue
+			}
+			slog.Info("EOD close — 00:30 DSM, closing before dead session",
+				"posID", pos.ProviderPositionID,
+				"side", pos.Side,
+			)
+			b.closeTrackedPosition(ctx, pos, "eod_close")
+		}
+		return
+	}
+
 	for _, pos := range b.registry.All() {
 		if pc, pending := b.pendingCloseReasons[pos.ProviderPositionID]; pending {
 			if time.Since(pc.sentAt) < pendingCloseTimeout {
