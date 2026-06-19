@@ -13,10 +13,9 @@ const (
 	TierStronger   = 2 
 	TierVeryStrong = 3 
 
-	rsiMidline      = 50.0
-	rsiEntryBuffer  = 3.0  // RSI must be this far from midline to enter — blocks borderline signals
-	rsiOversold     = 40.0
-	rsiOverbought   = 60.0
+	rsiMidline    = 50.0
+	rsiOversold   = 44.0
+	rsiOverbought = 56.0
 	srProximityMult = 1.5
 	srStabilityMult = 1.5
 	slATRMult       = 1.5
@@ -122,9 +121,9 @@ func evaluateEntry(states map[string]indicator.MarketState, currentPrice float64
 
 	if !isRanging {
 		switch {
-		case m5.Regime == "trending_up" && m5.RSI > rsiMidline+rsiEntryBuffer && m5.RSI < rsiOverbought:
+		case m5.Regime == "trending_up" && m5.RSI > rsiMidline && m5.RSI < rsiOverbought:
 			direction = "BUY"
-		case m5.Regime == "trending_down" && m5.RSI < rsiMidline-rsiEntryBuffer && m5.RSI > rsiOversold:
+		case m5.Regime == "trending_down" && m5.RSI < rsiMidline && m5.RSI > rsiOversold:
 			direction = "SELL"
 
 		// Breakout: price broke the 20-bar range. Trade in the direction confirmed by EMA + RSI.
