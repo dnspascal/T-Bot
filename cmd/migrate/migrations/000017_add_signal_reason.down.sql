@@ -1,0 +1,1 @@
+ALTER TABLE signals DROP COLUMN IF EXISTS reason;

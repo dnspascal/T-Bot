@@ -474,6 +474,7 @@ func (b *Bot) processClosedCandle(ctx context.Context, _ float64) {
 		SymbolID:            b.symbolUUID,
 		Provider:            b.provider.Name(),
 		Signal:              result.Signal,
+		Reason:              result.Reason,
 		Confluence:          result.Confluence,
 		Confidence:          result.Confidence,
 		ProcessingUS:        time.Since(evalStart).Microseconds(),

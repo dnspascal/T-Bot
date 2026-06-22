@@ -13,6 +13,7 @@ type Signal struct {
 	SymbolID             string
 	Provider             string
 	Signal               string // BUY | SELL | HOLD
+	Reason               string // why this signal was generated or held
 	Confluence           int
 	Confidence           float64 // 0.0–1.0 weighted factor strength
 	ProcessingUS         int64
