@@ -16,8 +16,8 @@ const (
 	rsiMidline    = 50.0
 	rsiOversold   = 44.0
 	rsiOverbought = 56.0
-	srProximityMult = 1.5
-	srStabilityMult = 1.5
+	srProximityMult  = 1.5
+	srAlignmentPips  = 7.0 // max pip gap between M15/M30 S/R levels to confirm same zone
 	slATRMult       = 1.5
 	tpATRMult       = 2.5
 	slRangeBuffer   = 0.25
@@ -47,9 +47,11 @@ type EntryResult struct {
 
 type rangeConfirmation struct {
 	confirmed           bool
-	consensusSupport    float64
-	consensusResistance float64
-	bonusTFs            int 
+	consensusSupport    float64 // near edge of support zone (max of supports) — BUY entry reference
+	consensusResistance float64 // near edge of resistance zone (min of resistances) — SELL entry reference
+	farSupport          float64 // far edge of support zone (min of supports) — BUY SL reference
+	farResistance       float64 // far edge of resistance zone (max of resistances) — SELL SL reference
+	bonusTFs            int
 }
 
 type fxSession int
@@ -120,6 +122,11 @@ func evaluateEntry(states map[string]indicator.MarketState, currentPrice float64
 	}
 
 	if !isRanging {
+		for _, tf := range []string{"M15", "M30"} {
+			if s, ok := states[tf]; ok && s.IsWarmedUp && s.Regime == "ranging" {
+				return hold(tf + " ranging — M5 trend is noise inside higher range")
+			}
+		}
 		switch {
 		case m5.Regime == "trending_up" && m5.RSI > rsiMidline && m5.RSI < rsiOverbought:
 			direction = "BUY"
@@ -302,7 +309,7 @@ func confirmRange(m5 indicator.MarketState, states map[string]indicator.MarketSt
 		bonusTFs++
 	}
 
-	tolerance := srStabilityMult * m5.ATR
+	tolerance := srAlignmentPips * pipSize
 	if slices.Max(supports)-slices.Min(supports) > tolerance {
 		return rangeConfirmation{}
 	}
@@ -321,6 +328,8 @@ func confirmRange(m5 indicator.MarketState, states map[string]indicator.MarketSt
 		confirmed:           true,
 		consensusSupport:    consensusSupport,
 		consensusResistance: consensusResistance,
+		farSupport:          slices.Min(supports),
+		farResistance:       slices.Max(resistances),
 		bonusTFs:            bonusTFs,
 	}
 }
@@ -350,7 +359,7 @@ func confirmHigherTFRange(states map[string]indicator.MarketState) (rangeConfirm
 		bonusTFs++
 	}
 
-	tolerance := srStabilityMult * m15.ATR
+	tolerance := srAlignmentPips * pipSize
 	if slices.Max(supports)-slices.Min(supports) > tolerance {
 		return rangeConfirmation{}, indicator.MarketState{}, false
 	}
@@ -368,6 +377,8 @@ func confirmHigherTFRange(states map[string]indicator.MarketState) (rangeConfirm
 		confirmed:           true,
 		consensusSupport:    consensusSupport,
 		consensusResistance: consensusResistance,
+		farSupport:          slices.Min(supports),
+		farResistance:       slices.Max(resistances),
 		bonusTFs:            bonusTFs,
 	}, m15, true
 }
@@ -387,13 +398,13 @@ func rangingDirection(m5 indicator.MarketState, rc rangeConfirmation, price floa
 
 func computeRangeSLTP(rc rangeConfirmation, direction string, price, atr float64) (slPrice, tpPrice float64) {
 	if direction == "BUY" {
-		sl := rc.consensusSupport - slRangeBuffer*atr
+		sl := rc.farSupport - slRangeBuffer*atr
 		tp := rc.consensusResistance - tpRangeBuffer*atr
 		if sl < price && tp > price {
 			return sl, tp
 		}
 	} else {
-		sl := rc.consensusResistance + slRangeBuffer*atr
+		sl := rc.farResistance + slRangeBuffer*atr
 		tp := rc.consensusSupport + tpRangeBuffer*atr
 		if sl > price && tp < price {
 			return sl, tp
