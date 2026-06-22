@@ -47,6 +47,7 @@ type EntryResult struct {
 
 type rangeConfirmation struct {
 	confirmed           bool
+	reason              string  // why confirmation failed — empty when confirmed
 	consensusSupport    float64 // near edge of support zone (max of supports) — BUY entry reference
 	consensusResistance float64 // near edge of resistance zone (min of resistances) — SELL entry reference
 	farSupport          float64 // far edge of support zone (min of supports) — BUY SL reference
@@ -171,7 +172,7 @@ func evaluateEntry(states map[string]indicator.MarketState, currentPrice float64
 		case m5.Regime == "ranging":
 			rangeConf = confirmRange(m5, states)
 			if !rangeConf.confirmed {
-				return hold("ranging: not confirmed across timeframes or S/R unstable")
+				return hold("ranging: " + rangeConf.reason)
 			}
 			direction = rangingDirection(m5, rangeConf, currentPrice)
 			if direction == "" {
@@ -305,8 +306,10 @@ func computeConfidence(m5 indicator.MarketState, states map[string]indicator.Mar
 }
 
 func confirmRange(m5 indicator.MarketState, states map[string]indicator.MarketState) rangeConfirmation {
+	fail := func(r string) rangeConfirmation { return rangeConfirmation{reason: r} }
+
 	if m5.SupportLevel <= 0 || m5.ResistanceLevel <= 0 || m5.ATR <= 0 {
-		return rangeConfirmation{}
+		return fail("M5 S/R not established")
 	}
 
 	supports := []float64{m5.SupportLevel}
@@ -315,10 +318,10 @@ func confirmRange(m5 indicator.MarketState, states map[string]indicator.MarketSt
 	for _, tf := range rangeRequiredTFs {
 		s, ok := states[tf]
 		if !ok || !s.IsWarmedUp || s.Regime != "ranging" {
-			return rangeConfirmation{}
+			return fail(tf + " not ranging")
 		}
 		if s.SupportLevel <= 0 || s.ResistanceLevel <= 0 {
-			return rangeConfirmation{}
+			return fail(tf + " missing S/R levels")
 		}
 		supports = append(supports, s.SupportLevel)
 		resistances = append(resistances, s.ResistanceLevel)
@@ -340,17 +343,17 @@ func confirmRange(m5 indicator.MarketState, states map[string]indicator.MarketSt
 
 	tolerance := srAlignmentPips * pipSize
 	if slices.Max(supports)-slices.Min(supports) > tolerance {
-		return rangeConfirmation{}
+		return fail("support levels misaligned across timeframes")
 	}
 	if slices.Max(resistances)-slices.Min(resistances) > tolerance {
-		return rangeConfirmation{}
+		return fail("resistance levels misaligned across timeframes")
 	}
 
 	consensusSupport := slices.Max(supports)
 	consensusResistance := slices.Min(resistances)
 
 	if consensusResistance <= consensusSupport {
-		return rangeConfirmation{}
+		return fail("range collapsed — resistance below support")
 	}
 
 	return rangeConfirmation{
