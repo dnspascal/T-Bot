@@ -122,11 +122,40 @@ func evaluateEntry(states map[string]indicator.MarketState, currentPrice float64
 	}
 
 	if !isRanging {
-		for _, tf := range []string{"M15", "M30"} {
-			if s, ok := states[tf]; ok && s.IsWarmedUp && s.Regime == "ranging" {
-				return hold(tf + " ranging — M5 trend is noise inside higher range")
+		// Peek at M5 direction so the gate can check H1 alignment.
+		var tentativeDir string
+		switch {
+		case m5.Regime == "trending_up":
+			tentativeDir = "BUY"
+		case m5.Regime == "trending_down":
+			tentativeDir = "SELL"
+		case m5.Regime == "breakout":
+			if m5.EMAFast > m5.EMASlow {
+				tentativeDir = "BUY"
+			} else {
+				tentativeDir = "SELL"
 			}
 		}
+
+		if tentativeDir != "" {
+			for _, tf := range []string{"M15", "M30"} {
+				s, ok := states[tf]
+				if !ok || !s.IsWarmedUp || s.Regime != "ranging" {
+					continue
+				}
+				h1, h1ok := states["H1"]
+				if !h1ok || !h1.IsWarmedUp || h1.Regime == "ranging" {
+					return hold(tf + " ranging — M5 trend is noise inside higher range")
+				}
+				if tentativeDir == "SELL" && h1.Regime != "trending_down" {
+					return hold(tf + " ranging — H1 not confirming SELL")
+				}
+				if tentativeDir == "BUY" && h1.Regime != "trending_up" {
+					return hold(tf + " ranging — H1 not confirming BUY")
+				}
+			}
+		}
+
 		switch {
 		case m5.Regime == "trending_up" && m5.RSI > rsiMidline && m5.RSI < rsiOverbought:
 			direction = "BUY"
