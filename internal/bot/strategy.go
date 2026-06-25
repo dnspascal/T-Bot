@@ -24,6 +24,7 @@ const (
 	tpRangeBuffer   = 0.15
 	minRR           = 1.5
 	minATRPips      = 3.0 // M5 ATR below this means spread eats the SL — skip the trade
+	minH1ADXTrend   = 25.0 // H1 ADX below this means no real trend — block trending/breakout entries
 )
 
 var confluenceTimeframes = []string{"M15", "M30", "H1", "H4"}
@@ -154,6 +155,12 @@ func evaluateEntry(states map[string]indicator.MarketState, currentPrice float64
 				if tentativeDir == "BUY" && h1.Regime != "trending_up" {
 					return hold(tf + " ranging — H1 not confirming BUY")
 				}
+			}
+		}
+
+		if tentativeDir != "" {
+			if h1, ok := states["H1"]; ok && h1.IsWarmedUp && h1.ADX < minH1ADXTrend {
+				return hold("H1 ADX too weak — no trend conviction")
 			}
 		}
 
