@@ -177,15 +177,44 @@ func evaluateEntry(states map[string]indicator.MarketState, currentPrice float64
 			direction = "SELL"
 
 		case m5.Regime == "ranging":
-			rangeConf = confirmRange(m5, states)
-			if !rangeConf.confirmed {
-				return hold("ranging: " + rangeConf.reason)
+			m15State, m15ok := states["M15"]
+			if m15ok && m15State.IsWarmedUp && (m15State.Regime == "trending_up" || m15State.Regime == "trending_down") {
+				// M5 consolidating inside M15 trend — bounce trade with M15 directional bias
+				if m5.SupportLevel <= 0 || m5.ResistanceLevel <= 0 || m5.ATR <= 0 {
+					return hold("ranging: M5 S/R not established")
+				}
+				m5Conf := rangeConfirmation{
+					confirmed:           true,
+					consensusSupport:    m5.SupportLevel,
+					consensusResistance: m5.ResistanceLevel,
+					farSupport:          m5.SupportLevel,
+					farResistance:       m5.ResistanceLevel,
+					bonusTFs:            1,
+				}
+				dir := rangingDirection(m5, m5Conf, currentPrice)
+				if dir == "" {
+					return hold("ranging: price not near M5 S/R or RSI not confirming")
+				}
+				if m15State.Regime == "trending_up" && dir != "BUY" {
+					return hold("ranging: M5 at resistance but M15 trending up — skip counter-trend")
+				}
+				if m15State.Regime == "trending_down" && dir != "SELL" {
+					return hold("ranging: M5 at support but M15 trending down — skip counter-trend")
+				}
+				direction = dir
+				rangeConf = m5Conf
+				isRanging = true
+			} else {
+				rangeConf = confirmRange(m5, states)
+				if !rangeConf.confirmed {
+					return hold("ranging: " + rangeConf.reason)
+				}
+				direction = rangingDirection(m5, rangeConf, currentPrice)
+				if direction == "" {
+					return hold("ranging: price not near confirmed S/R or RSI not confirming")
+				}
+				isRanging = true
 			}
-			direction = rangingDirection(m5, rangeConf, currentPrice)
-			if direction == "" {
-				return hold("ranging: price not near confirmed S/R or RSI not confirming")
-			}
-			isRanging = true
 
 		default:
 			return hold("no M5 trend trigger")
