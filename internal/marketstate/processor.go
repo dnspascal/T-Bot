@@ -50,7 +50,10 @@ func (p *Processor) WarmCandle(openTime int64, open, high, low, close float64, v
 }
 
 func (p *Processor) Commit(ctx context.Context) error {
-	_, err := p.repo.Insert(ctx, p.calculator.LastState())
+	id, err := p.repo.Insert(ctx, p.calculator.LastState())
+	if err == nil {
+		p.lastID = id
+	}
 	return err
 }
 
