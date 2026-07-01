@@ -54,7 +54,7 @@ func (b *Bot) watchPositions(ctx context.Context, ms indicator.MarketState) {
 			continue
 		}
 
-		n, signals := countReversalSignals(ms, pos)
+		n, signals := countReversalSignals(ms, pos, b.pipSize)
 		if n == 0 {
 			continue
 		}
@@ -78,10 +78,10 @@ func (b *Bot) watchPositions(ctx context.Context, ms indicator.MarketState) {
 	}
 }
 
-func countReversalSignals(ms indicator.MarketState, pos trackedPosition) (int, []string) {
+func countReversalSignals(ms indicator.MarketState, pos trackedPosition, pipSize float64) (int, []string) {
 	var signals []string
 
-	if pct := peakDrawbackPct(pos, ms.Close); pct >= peakDrawbackThreshold {
+	if pct := peakDrawbackPct(pos, ms.Close, pipSize); pct >= peakDrawbackThreshold {
 		signals = append(signals, fmt.Sprintf("peak_drawback=%.0f%%", pct))
 	}
 
@@ -109,7 +109,7 @@ func countReversalSignals(ms indicator.MarketState, pos trackedPosition) (int, [
 }
 
 
-func peakDrawbackPct(pos trackedPosition, currentPrice float64) float64 {
+func peakDrawbackPct(pos trackedPosition, currentPrice, pipSize float64) float64 {
 	if pos.OpenPrice == 0 {
 		return 0
 	}
@@ -163,7 +163,7 @@ func (b *Bot) checkPeakDrawback(ctx context.Context, currentPrice float64) {
 		if !ok {
 			continue
 		}
-		if pct := peakDrawbackPct(pos, currentPrice); pct >= peakDrawbackThreshold {
+		if pct := peakDrawbackPct(pos, currentPrice, b.pipSize); pct >= peakDrawbackThreshold {
 			reason := fmt.Sprintf("peak_drawback=%.0f%%", pct)
 			slog.Info("peak drawback — closing position",
 				"posID", pos.ProviderPositionID,
@@ -203,7 +203,7 @@ func (b *Bot) logM1State(currentPrice float64) {
 			"pnlUSD", fmt.Sprintf("%+.4f", unrealized),
 			"maxFav", pos.MaxFavorable,
 			"maxAdv", pos.MaxAdverse,
-			"drawbackPct", fmt.Sprintf("%.1f%%", peakDrawbackPct(pos, currentPrice)),
+			"drawbackPct", fmt.Sprintf("%.1f%%", peakDrawbackPct(pos, currentPrice, b.pipSize)),
 		)
 	}
 

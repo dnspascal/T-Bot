@@ -40,6 +40,22 @@ func SeedSymbols(ctx context.Context, db *pgxpool.Pool) error {
 			defaultTPPips:    20,
 		},
 		{
+			symbol:           "XAUUSD",
+			assetClass:       "commodity",
+			baseAsset:        "XAU",
+			quoteAsset:       "USD",
+			exchange:         "ctrader",
+			exchangeSymbolID: "", // fill in after confirming cTrader symbol ID
+			pipSize:          0.10,
+			minVolume:        100,
+			maxVolume:        50000,
+			maxDailyVolume:   200000,
+			lotSize:          100,
+			tradingHours:     "01:00-23:59 UTC",
+			defaultSLPips:    50,
+			defaultTPPips:    100,
+		},
+		{
 			symbol:           "BTCUSDT",
 			assetClass:       "crypto",
 			baseAsset:        "BTC",

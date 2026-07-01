@@ -1013,6 +1013,75 @@ func decodeCtidAccount(data []byte) CtidAccount {
 	return acc
 }
 
+func encodeSymbolsListReq(accountID int64) []byte {
+	var b []byte
+	b = appendUint32(b, 1, ProtoOASymbolsListReq)
+	b = appendInt64(b, 2, accountID)
+	return b
+}
+
+type LightSymbol struct {
+	SymbolID   int64
+	SymbolName string
+	Enabled    bool
+}
+
+func decodeSymbolsListRes(data []byte) []LightSymbol {
+	var symbols []LightSymbol
+	i := 0
+	for i < len(data) {
+		tag, n := decodeVarint(data[i:])
+		if n == 0 {
+			break
+		}
+		i += n
+		field := tag >> 3
+		wire := tag & 0x7
+		if field == 2 && wire == 2 { // repeated symbol
+			l, n2 := decodeVarint(data[i:])
+			i += n2
+			sym := decodeLightSymbol(data[i : i+int(l)])
+			i += int(l)
+			symbols = append(symbols, sym)
+			continue
+		}
+		i = skipField(data, i, wire)
+	}
+	return symbols
+}
+
+func decodeLightSymbol(data []byte) LightSymbol {
+	var sym LightSymbol
+	i := 0
+	for i < len(data) {
+		tag, n := decodeVarint(data[i:])
+		if n == 0 {
+			break
+		}
+		i += n
+		field := tag >> 3
+		wire := tag & 0x7
+		switch {
+		case field == 1 && wire == 0: // symbolId
+			v, n2 := decodeVarint(data[i:])
+			i += n2
+			sym.SymbolID = int64(v)
+		case field == 2 && wire == 0: // enabled
+			v, n2 := decodeVarint(data[i:])
+			i += n2
+			sym.Enabled = v != 0
+		case field == 5 && wire == 2: // symbolName
+			l, n2 := decodeVarint(data[i:])
+			i += n2
+			sym.SymbolName = string(data[i : i+int(l)])
+			i += int(l)
+		default:
+			i = skipField(data, i, wire)
+		}
+	}
+	return sym
+}
+
 func payloadTypeOf(data []byte) uint32 {
 	i := 0
 	for i < len(data) {

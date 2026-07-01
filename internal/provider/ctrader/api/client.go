@@ -46,6 +46,7 @@ type Client struct {
 	trendbarsResCh chan []Trendbar
 	accountListCh  chan []CtidAccount
 	dealListResCh  chan []DealInfo
+	symbolsListCh  chan []LightSymbol
 }
 
 func NewClient(demo bool, accountID, symbolID int64) *Client {
@@ -60,6 +61,7 @@ func NewClient(demo bool, accountID, symbolID int64) *Client {
 		trendbarsResCh: make(chan []Trendbar, 1),
 		accountListCh:  make(chan []CtidAccount, 1),
 		dealListResCh:  make(chan []DealInfo, 1),
+		symbolsListCh:  make(chan []LightSymbol, 1),
 	}
 	c.conn = NewConnection(demo, c.handleMessage)
 	return c
@@ -183,6 +185,18 @@ func (c *Client) GetDealsForPosition(positionID int64, from time.Time) (*DealInf
 		default:
 		}
 		return nil, fmt.Errorf("GetDealsForPosition: timeout waiting for response")
+	}
+}
+
+func (c *Client) ListSymbols() ([]LightSymbol, error) {
+	if err := c.conn.SendRaw(ProtoOASymbolsListReq, encodeSymbolsListReq(c.accountID)); err != nil {
+		return nil, fmt.Errorf("ListSymbols send: %w", err)
+	}
+	select {
+	case syms := <-c.symbolsListCh:
+		return syms, nil
+	case <-time.After(15 * time.Second):
+		return nil, fmt.Errorf("ListSymbols: timeout waiting for response")
 	}
 }
 
@@ -333,6 +347,13 @@ func (c *Client) handleMessage(payloadType uint32, payload []byte) {
 		deals := decodeDealListRes(payload)
 		select {
 		case c.dealListResCh <- deals:
+		default:
+		}
+
+	case ProtoOASymbolsListRes:
+		syms := decodeSymbolsListRes(payload)
+		select {
+		case c.symbolsListCh <- syms:
 		default:
 		}
 

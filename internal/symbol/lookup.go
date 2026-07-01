@@ -8,7 +8,8 @@ import (
 )
 
 type SymbolLookup struct {
-	uuids map[string]string
+	uuids    map[string]string
+	pipSizes map[string]float64
 }
 
 func (s *SymbolLookup) Get(name string) (string, error) {
@@ -19,9 +20,20 @@ func (s *SymbolLookup) Get(name string) (string, error) {
 	return uuid, nil
 }
 
+func (s *SymbolLookup) GetPipSize(name string) (float64, error) {
+	ps, ok := s.pipSizes[name]
+	if !ok {
+		return 0, fmt.Errorf("pip size not found for symbol: %s", name)
+	}
+	return ps, nil
+}
+
 func LoadLookup(ctx context.Context, pool *pgxpool.Pool, symbolNames []string) (*SymbolLookup, error) {
 	rows, err := pool.Query(ctx,
-		"SELECT symbol, id FROM symbols WHERE symbol = ANY($1)",
+		`SELECT s.symbol, s.id, sc.pip_size
+		 FROM symbols s
+		 JOIN symbol_configs sc ON sc.symbol_id = s.id
+		 WHERE s.symbol = ANY($1) AND sc.deleted_at IS NULL`,
 		symbolNames,
 	)
 	if err != nil {
@@ -30,12 +42,15 @@ func LoadLookup(ctx context.Context, pool *pgxpool.Pool, symbolNames []string) (
 	defer rows.Close()
 
 	uuids := make(map[string]string)
+	pipSizes := make(map[string]float64)
 	for rows.Next() {
-		var symbol, uuid string
-		if err := rows.Scan(&symbol, &uuid); err != nil {
+		var sym, uuid string
+		var pipSize float64
+		if err := rows.Scan(&sym, &uuid, &pipSize); err != nil {
 			return nil, fmt.Errorf("scan symbol: %w", err)
 		}
-		uuids[symbol] = uuid
+		uuids[sym] = uuid
+		pipSizes[sym] = pipSize
 	}
 
 	if err := rows.Err(); err != nil {
@@ -46,5 +61,5 @@ func LoadLookup(ctx context.Context, pool *pgxpool.Pool, symbolNames []string) (
 		return nil, fmt.Errorf("no symbols found in database")
 	}
 
-	return &SymbolLookup{uuids: uuids}, nil
+	return &SymbolLookup{uuids: uuids, pipSizes: pipSizes}, nil
 }

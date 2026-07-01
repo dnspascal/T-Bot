@@ -35,7 +35,7 @@ func newPositionRegistry() *PositionRegistry {
 	return &PositionRegistry{positions: make(map[string]*trackedPosition)}
 }
 
-func (r *PositionRegistry) CanOpen(tier int, side string, currentPrice float64) (bool, string) {
+func (r *PositionRegistry) CanOpen(tier int, side string, currentPrice, pipSize float64) (bool, string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if len(r.positions) >= maxTotalPositions {

@@ -53,7 +53,11 @@ func initializeBot(ctx context.Context, cfg *config.Config, svc *Services, prov 
 		proc := marketstate.NewProcessor(symbolUUID, prov.Name(), period, buf, svc.Repos.MarketState)
 		processorMgr.AddProcessor(period, proc)
 	}
-	tradingBot := bot.New(cfg, prov, symbol, symbolUUID, authResult.AccountID, svc.DB.Pool, riskMgr, balance, authResult.Leverage, svc.Lookup, svc.Repos.Ticks, svc.Repos.Candles, svc.Repos.Signals, svc.Repos.Orders, svc.Repos.Fills, svc.Repos.Positions, svc.Repos.PnLs, svc.Repos.Events, processorMgr)
+	pipSize, err := svc.Lookup.GetPipSize(symbol)
+	if err != nil {
+		log.Fatal("get pip size:", err)
+	}
+	tradingBot := bot.New(cfg, prov, symbol, symbolUUID, authResult.AccountID, pipSize, svc.DB.Pool, riskMgr, balance, authResult.Leverage, svc.Lookup, svc.Repos.Ticks, svc.Repos.Candles, svc.Repos.Signals, svc.Repos.Orders, svc.Repos.Fills, svc.Repos.Positions, svc.Repos.PnLs, svc.Repos.Events, processorMgr)
 
 	return &BotInitResult{
 		Bot:          tradingBot,

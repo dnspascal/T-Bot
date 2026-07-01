@@ -26,8 +26,6 @@ import (
 )
 
 
-const pipSize = 0.0001
-
 const pendingOrderTimeout = 30 * time.Second
 const pendingCloseTimeout = 30 * time.Second
 
@@ -46,6 +44,7 @@ type Bot struct {
 	symbol         string
 	symbolUUID     string
 	providerAcctID string
+	pipSize        float64
 
 	balanceMu sync.Mutex
 	balance   float64
@@ -95,6 +94,7 @@ func New(
 	sym string,
 	symbolUUID string,
 	providerAcctID string,
+	pipSize float64,
 	db *pgxpool.Pool,
 	riskMgr *risk.Manager,
 	balance float64,
@@ -116,6 +116,7 @@ func New(
 		symbol:         sym,
 		symbolUUID:     symbolUUID,
 		providerAcctID: providerAcctID,
+		pipSize:        pipSize,
 		db:             db,
 		riskMgr:        riskMgr,
 		balance:        balance,
@@ -452,7 +453,7 @@ func (b *Bot) processClosedCandle(ctx context.Context, _ float64) {
 	b.watchPositions(ctx, m5)
 
 	evalStart := time.Now()
-	result := evaluateEntry(states, mid, b.cfg.LondonNYOnly)
+	result := evaluateEntry(states, mid, b.cfg.LondonNYOnly, b.pipSize)
 
 	if b.forceTestOrder && result.Signal == "HOLD" {
 		slog.Warn("FORCE_TEST_ORDER: overriding HOLD with BUY for pipeline test")
@@ -462,8 +463,8 @@ func (b *Bot) processClosedCandle(ctx context.Context, _ float64) {
 			Tier:       TierNormal,
 			SLPrice:    mid - m5.ATR*slATRMult,
 			TPPrice:    mid + m5.ATR*tpATRMult,
-			SLPips:     m5.ATR * slATRMult / pipSize,
-			TPPips:     m5.ATR * tpATRMult / pipSize,
+			SLPips:     m5.ATR * slATRMult / b.pipSize,
+			TPPips:     m5.ATR * tpATRMult / b.pipSize,
 			ATR:        m5.ATR,
 		}
 		b.forceTestOrder = false
@@ -532,7 +533,7 @@ func (b *Bot) sameDirLosingPosition(side string) string {
 		slDist = newest.SLPrice - newest.OpenPrice
 	}
 	if slDist <= 0 {
-		slDist = 5 * pipSize
+		slDist = 5 * b.pipSize
 	}
 
 	if lossInPrice > slDist*0.4 {
@@ -637,7 +638,7 @@ func (b *Bot) onTradeSignal(ctx context.Context, result EntryResult, price provi
 		return
 	}
 
-	if ok, reason := b.registry.CanOpen(result.Tier, result.Signal, price.Mid); !ok {
+	if ok, reason := b.registry.CanOpen(result.Tier, result.Signal, price.Mid, b.pipSize); !ok {
 		slog.Info("signal skipped — position limit", "reason", reason)
 		return
 	}

@@ -89,7 +89,7 @@ func inActiveSession(londonNYOnly bool) bool {
 	return s != sessionDead
 }
 
-func evaluateEntry(states map[string]indicator.MarketState, currentPrice float64, londonNYOnly bool) EntryResult {
+func evaluateEntry(states map[string]indicator.MarketState, currentPrice float64, londonNYOnly bool, pipSize float64) EntryResult {
 	hold := func(reason string) EntryResult {
 		return EntryResult{Signal: "HOLD", Reason: reason}
 	}
@@ -111,7 +111,7 @@ func evaluateEntry(states map[string]indicator.MarketState, currentPrice float64
 	var rangeATR = m5.ATR
 
 	if m5.Regime != "ranging" {
-		if htfConf, htfAnchor, ok := confirmHigherTFRange(states); ok {
+		if htfConf, htfAnchor, ok := confirmHigherTFRange(states, pipSize); ok {
 			dir := rangingDirection(htfAnchor, htfConf, currentPrice)
 			if dir == "" {
 				return hold("M15+M30 ranging: price not near S/R or RSI not confirming")
@@ -205,7 +205,7 @@ func evaluateEntry(states map[string]indicator.MarketState, currentPrice float64
 				rangeConf = m5Conf
 				isRanging = true
 			} else {
-				rangeConf = confirmRange(m5, states)
+				rangeConf = confirmRange(m5, states, pipSize)
 				if !rangeConf.confirmed {
 					return hold("ranging: " + rangeConf.reason)
 				}
@@ -277,7 +277,7 @@ func evaluateEntry(states map[string]indicator.MarketState, currentPrice float64
 		return hold("cannot compute valid SL/TP")
 	}
 
-	slPips, tpPips := pricesToPips(direction, currentPrice, slPrice, tpPrice)
+	slPips, tpPips := pricesToPips(direction, currentPrice, slPrice, tpPrice, pipSize)
 	if slPips < 3 || tpPips < 3 {
 		return hold("SL/TP too tight in pips")
 	}
@@ -341,7 +341,7 @@ func computeConfidence(m5 indicator.MarketState, states map[string]indicator.Mar
 	return min(score/100.0, 1.0)
 }
 
-func confirmRange(m5 indicator.MarketState, states map[string]indicator.MarketState) rangeConfirmation {
+func confirmRange(m5 indicator.MarketState, states map[string]indicator.MarketState, pipSize float64) rangeConfirmation {
 	fail := func(r string) rangeConfirmation { return rangeConfirmation{reason: r} }
 
 	if m5.SupportLevel <= 0 || m5.ResistanceLevel <= 0 || m5.ATR <= 0 {
@@ -403,7 +403,7 @@ func confirmRange(m5 indicator.MarketState, states map[string]indicator.MarketSt
 }
 
 
-func confirmHigherTFRange(states map[string]indicator.MarketState) (rangeConfirmation, indicator.MarketState, bool) {
+func confirmHigherTFRange(states map[string]indicator.MarketState, pipSize float64) (rangeConfirmation, indicator.MarketState, bool) {
 	m15, ok := states["M15"]
 	if !ok || !m15.IsWarmedUp || m15.Regime != "ranging" || m15.SupportLevel <= 0 || m15.ResistanceLevel <= 0 || m15.ATR <= 0 {
 		return rangeConfirmation{}, indicator.MarketState{}, false
@@ -505,7 +505,7 @@ func confluenceToTier(c int) int {
 	}
 }
 
-func pricesToPips(direction string, entry, slPrice, tpPrice float64) (slPips, tpPips float64) {
+func pricesToPips(direction string, entry, slPrice, tpPrice, pipSize float64) (slPips, tpPips float64) {
 	if direction == "BUY" {
 		slPips = (entry - slPrice) / pipSize
 		tpPips = (tpPrice - entry) / pipSize

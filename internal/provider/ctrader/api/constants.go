@@ -23,6 +23,9 @@ const (
 	ProtoOADealListReq = uint32(2161)
 	ProtoOADealListRes = uint32(2162)
 
+	ProtoOASymbolsListReq = uint32(2116)
+	ProtoOASymbolsListRes = uint32(2117)
+
 
 	ProtoOASubscribeLiveTrendbarReq = uint32(2135)
 	ProtoOASubscribeLiveTrendbarRes = uint32(2165)
