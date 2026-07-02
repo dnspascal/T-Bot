@@ -48,23 +48,26 @@ jobs:
       - name: Stop bots before migrations
         run: |
           ssh -i ~/.ssh/id_ed25519 ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} \
-            "sudo systemctl stop tbot.service tbot-gold.service 2>/dev/null || true"
+            "sudo systemctl stop tbot.service; sudo systemctl stop tbot-gold.service 2>/dev/null; true"
 
       - name: Run migrations
         run: |
           ssh -i ~/.ssh/id_ed25519 ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} \
-            "cd /srv/tbot && sudo mv migrate.new migrate && sudo -u tbot /srv/tbot/migrate"
+            "sudo -u tbot /srv/tbot/migrate.new"
 
       - name: Run seed
         run: |
           ssh -i ~/.ssh/id_ed25519 ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} \
-            "cd /srv/tbot && sudo mv seed.new seed && sudo chown tbot:tbot /srv/tbot/seed && sudo -u tbot /srv/tbot/seed"
+            "sudo -u tbot /srv/tbot/seed.new"
 
       - name: Swap binaries and restart
         run: |
           ssh -i ~/.ssh/id_ed25519 ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} "
             mv /srv/tbot/bot /srv/tbot/bot.old 2>/dev/null || true &&
+            mv /srv/tbot/migrate /srv/tbot/migrate.old 2>/dev/null || true &&
             mv /srv/tbot/bot.new /srv/tbot/bot &&
+            mv /srv/tbot/migrate.new /srv/tbot/migrate &&
+            mv /srv/tbot/seed.new /srv/tbot/seed &&
             sudo systemctl restart tbot.service &&
-            sudo systemctl restart tbot-gold.service 2>/dev/null || true
+            sudo systemctl restart tbot-gold.service 2>/dev/null; true
           "
