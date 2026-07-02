@@ -53,12 +53,12 @@ jobs:
       - name: Run migrations
         run: |
           ssh -i ~/.ssh/id_ed25519 ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} \
-            "sudo -u tbot /srv/tbot/migrate.new"
+            "cd /srv/tbot && sudo -u tbot /srv/tbot/migrate.new"
 
       - name: Run seed
         run: |
           ssh -i ~/.ssh/id_ed25519 ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} \
-            "sudo -u tbot /srv/tbot/seed.new"
+            "cd /srv/tbot && sudo -u tbot /srv/tbot/seed.new"
 
       - name: Swap binaries and restart
         run: |
