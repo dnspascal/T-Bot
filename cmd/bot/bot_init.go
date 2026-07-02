@@ -57,7 +57,13 @@ func initializeBot(ctx context.Context, cfg *config.Config, svc *Services, prov 
 	if err != nil {
 		log.Fatal("get pip size:", err)
 	}
-	tradingBot := bot.New(cfg, prov, symbol, symbolUUID, authResult.AccountID, pipSize, svc.DB.Pool, riskMgr, balance, authResult.Leverage, svc.Lookup, svc.Repos.Ticks, svc.Repos.Candles, svc.Repos.Signals, svc.Repos.Orders, svc.Repos.Fills, svc.Repos.Positions, svc.Repos.PnLs, svc.Repos.Events, processorMgr)
+
+	var lotUnit int64 = 100_000 // default: EURUSD micro lot in cTrader API units
+	if prov.Name() == "ctrader" && symbol == "XAUUSD" {
+		lotUnit = 100 // gold micro lot in cTrader API units
+	}
+
+	tradingBot := bot.New(cfg, prov, symbol, symbolUUID, authResult.AccountID, pipSize, lotUnit, svc.DB.Pool, riskMgr, balance, authResult.Leverage, svc.Lookup, svc.Repos.Ticks, svc.Repos.Candles, svc.Repos.Signals, svc.Repos.Orders, svc.Repos.Fills, svc.Repos.Positions, svc.Repos.PnLs, svc.Repos.Events, processorMgr)
 
 	return &BotInitResult{
 		Bot:          tradingBot,

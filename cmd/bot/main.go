@@ -47,7 +47,11 @@ func main() {
 	if cfg.EnableCTrader {
 		enabledProviders = append(enabledProviders, "ctrader")
 
-		ctraderClient := api.NewClient(cfg.CTrader.Demo, cfg.CTrader.AccountID, cfg.CTrader.SymbolID)
+		priceDivisor, err := svc.Lookup.GetPriceDivisor(cfg.CTraderSymbol)
+		if err != nil {
+			log.Fatal("get price divisor:", err)
+		}
+		ctraderClient := api.NewClient(cfg.CTrader.Demo, cfg.CTrader.AccountID, cfg.CTrader.SymbolID, priceDivisor)
 		if err := ctraderClient.Connect(); err != nil {
 			log.Fatal("ctrader connect:", err)
 		}

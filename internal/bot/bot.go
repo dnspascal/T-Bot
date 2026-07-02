@@ -46,6 +46,8 @@ type Bot struct {
 	providerAcctID string
 	pipSize        float64
 
+	lotUnit int64 // base API volume units for 1 micro lot on this symbol
+
 	balanceMu sync.Mutex
 	balance   float64
 	leverage  float64
@@ -95,6 +97,7 @@ func New(
 	symbolUUID string,
 	providerAcctID string,
 	pipSize float64,
+	lotUnit int64,
 	db *pgxpool.Pool,
 	riskMgr *risk.Manager,
 	balance float64,
@@ -117,6 +120,7 @@ func New(
 		symbolUUID:     symbolUUID,
 		providerAcctID: providerAcctID,
 		pipSize:        pipSize,
+		lotUnit:        lotUnit,
 		db:             db,
 		riskMgr:        riskMgr,
 		balance:        balance,
@@ -183,7 +187,7 @@ func (b *Bot) Run(ctx context.Context, startedAt time.Time) {
 }
 
 func (b *Bot) reconcileOpenPositions(ctx context.Context) {
-	dbPositions, err := b.positions.OpenByProvider(ctx, b.provider.Name())
+	dbPositions, err := b.positions.OpenByProvider(ctx, b.provider.Name(), b.symbolUUID)
 	if err != nil {
 		slog.Error("startup reconcile: failed to query open positions", "err", err)
 		return
@@ -664,15 +668,13 @@ func (b *Bot) onTradeSignal(ctx context.Context, result EntryResult, price provi
 
 	var volume int64
 	if b.provider.Name() == "ctrader" {
-		// Fixed lot table: 100,000 API centi-units = 0.01 real lots on cTrader.
-		// c2-3 → 0.01, c4-5 → 0.02, c6-7 → 0.03 (hard cap).
 		switch {
 		case result.Confluence >= 6:
-			volume = 300_000
+			volume = b.lotUnit * 3
 		case result.Confluence >= 4:
-			volume = 200_000
+			volume = b.lotUnit * 2
 		default:
-			volume = 100_000
+			volume = b.lotUnit
 		}
 	} else {
 		var sizeErr error

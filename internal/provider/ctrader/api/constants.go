@@ -26,6 +26,9 @@ const (
 	ProtoOASymbolsListReq = uint32(2116)
 	ProtoOASymbolsListRes = uint32(2117)
 
+	ProtoOASymbolByIdReq = uint32(2118)
+	ProtoOASymbolByIdRes = uint32(2119)
+
 
 	ProtoOASubscribeLiveTrendbarReq = uint32(2135)
 	ProtoOASubscribeLiveTrendbarRes = uint32(2165)

@@ -31,12 +31,13 @@ type CtidAccount struct {
 }
 
 type Client struct {
-	conn      *Connection
-	accountID int64
-	symbolID  int64
+	conn         *Connection
+	accountID    int64
+	symbolID     int64
+	priceDivisor float64
 
-	mu      sync.Mutex
-	authed  bool
+	mu     sync.Mutex
+	authed bool
 	PriceCh     chan PriceEvent
 	ExecutionCh chan ExecutionEvent
 	TrendbarCh  chan Trendbar 
@@ -46,22 +47,25 @@ type Client struct {
 	trendbarsResCh chan []Trendbar
 	accountListCh  chan []CtidAccount
 	dealListResCh  chan []DealInfo
-	symbolsListCh  chan []LightSymbol
+	symbolByIdResCh chan []LightSymbol
+	accountAuthedCh chan struct{}
 }
 
-func NewClient(demo bool, accountID, symbolID int64) *Client {
+func NewClient(demo bool, accountID, symbolID int64, priceDivisor float64) *Client {
 	c := &Client{
-		accountID:      accountID,
-		symbolID:       symbolID,
+		accountID:    accountID,
+		symbolID:     symbolID,
+		priceDivisor: priceDivisor,
 		PriceCh:        make(chan PriceEvent, 100),
 		ExecutionCh:    make(chan ExecutionEvent, 10),
 		TrendbarCh:     make(chan Trendbar, 10),
 		traderResCh:    make(chan TraderInfo, 1),
 		reconcileResCh: make(chan []OpenPosition, 1),
 		trendbarsResCh: make(chan []Trendbar, 1),
-		accountListCh:  make(chan []CtidAccount, 1),
-		dealListResCh:  make(chan []DealInfo, 1),
-		symbolsListCh:  make(chan []LightSymbol, 1),
+		accountListCh:   make(chan []CtidAccount, 1),
+		dealListResCh:   make(chan []DealInfo, 1),
+		symbolByIdResCh: make(chan []LightSymbol, 1),
+		accountAuthedCh: make(chan struct{}),
 	}
 	c.conn = NewConnection(demo, c.handleMessage)
 	return c
@@ -106,8 +110,16 @@ func (c *Client) AuthApp(clientID, clientSecret string) error {
 }
 
 func (c *Client) AuthAccount(accessToken string) error {
-	return c.conn.SendRaw(ProtoOAAccountAuthReq,
-		encodeAccountAuthReq(c.accountID, accessToken))
+	if err := c.conn.SendRaw(ProtoOAAccountAuthReq,
+		encodeAccountAuthReq(c.accountID, accessToken)); err != nil {
+		return err
+	}
+	select {
+	case <-c.accountAuthedCh:
+		return nil
+	case <-time.After(10 * time.Second):
+		return fmt.Errorf("AuthAccount: timeout waiting for server confirmation")
+	}
 }
 
 func (c *Client) FetchAccountInfo() (TraderInfo, error) {
@@ -188,15 +200,15 @@ func (c *Client) GetDealsForPosition(positionID int64, from time.Time) (*DealInf
 	}
 }
 
-func (c *Client) ListSymbols() ([]LightSymbol, error) {
-	if err := c.conn.SendRaw(ProtoOASymbolsListReq, encodeSymbolsListReq(c.accountID)); err != nil {
-		return nil, fmt.Errorf("ListSymbols send: %w", err)
+func (c *Client) GetSymbolsByIds(ids []int64) ([]LightSymbol, error) {
+	if err := c.conn.SendRaw(ProtoOASymbolsListReq, encodeSymbolByIdReq(c.accountID, ids)); err != nil {
+		return nil, fmt.Errorf("GetSymbolsByIds send: %w", err)
 	}
 	select {
-	case syms := <-c.symbolsListCh:
+	case syms := <-c.symbolByIdResCh:
 		return syms, nil
 	case <-time.After(15 * time.Second):
-		return nil, fmt.Errorf("ListSymbols: timeout waiting for response")
+		return nil, fmt.Errorf("GetSymbolsByIds: timeout waiting for response")
 	}
 }
 
@@ -244,13 +256,17 @@ func (c *Client) handleMessage(payloadType uint32, payload []byte) {
 		c.authed = true
 		c.mu.Unlock()
 		slog.Info("account authenticated", "accountID", c.accountID)
+		select {
+		case <-c.accountAuthedCh:
+		default:
+			close(c.accountAuthedCh)
+		}
 
 	case ProtoOASpotEvent:
 		bid, ask, ok := decodeSpotEvent(payload)
 		if ok {
-			const divisor = 100000.0
-			bidF := float64(bid) / divisor
-			askF := float64(ask) / divisor
+			bidF := float64(bid) / c.priceDivisor
+			askF := float64(ask) / c.priceDivisor
 			event := PriceEvent{
 				Bid:       bidF,
 				Ask:       askF,
@@ -350,10 +366,10 @@ func (c *Client) handleMessage(payloadType uint32, payload []byte) {
 		default:
 		}
 
-	case ProtoOASymbolsListRes:
-		syms := decodeSymbolsListRes(payload)
+	case ProtoOASymbolsListRes: // 2117: on this server, response to by-ID lookup
+		syms := decodeSymbolByIdRes(payload)
 		select {
-		case c.symbolsListCh <- syms:
+		case c.symbolByIdResCh <- syms:
 		default:
 		}
 
@@ -369,6 +385,12 @@ func (c *Client) handleMessage(payloadType uint32, payload []byte) {
 	case ProtoOAErrorRes:
 		code, desc := decodeOAError(payload)
 		slog.Error("cTrader OA error", "code", code, "description", desc)
+		if code == "SYMBOL_NOT_FOUND" {
+			select {
+			case c.symbolByIdResCh <- nil:
+			default:
+			}
+		}
 
 	case 50:
 		code, desc := decodeGenericError(payload)

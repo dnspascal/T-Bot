@@ -15,6 +15,7 @@ func SeedSymbols(ctx context.Context, db *pgxpool.Pool) error {
 		exchange         string
 		exchangeSymbolID string
 		pipSize          float64
+		priceDigits      int
 		minVolume        int64
 		maxVolume        int64
 		maxDailyVolume   int64
@@ -31,6 +32,7 @@ func SeedSymbols(ctx context.Context, db *pgxpool.Pool) error {
 			exchange:         "ctrader",
 			exchangeSymbolID: "1",
 			pipSize:          0.0001,
+			priceDigits:      5,
 			minVolume:        100000,
 			maxVolume:        10000000,
 			maxDailyVolume:   50000000,
@@ -45,8 +47,9 @@ func SeedSymbols(ctx context.Context, db *pgxpool.Pool) error {
 			baseAsset:        "XAU",
 			quoteAsset:       "USD",
 			exchange:         "ctrader",
-			exchangeSymbolID: "", // fill in after confirming cTrader symbol ID
+			exchangeSymbolID: "41",
 			pipSize:          0.10,
+			priceDigits:      2,
 			minVolume:        100,
 			maxVolume:        50000,
 			maxDailyVolume:   200000,
@@ -86,10 +89,10 @@ func SeedSymbols(ctx context.Context, db *pgxpool.Pool) error {
 
 		// Insert symbol config (idempotent)
 		_, err = db.Exec(ctx, `
-			INSERT INTO symbol_configs (symbol_id, pip_size, min_volume, max_volume, max_daily_volume, lot_size, trading_hours, default_sl_pips, default_tp_pips)
-			SELECT id, $2, $3, $4, $5, $6, $7, $8, $9 FROM symbols WHERE symbol = $1
-			ON CONFLICT (symbol_id) DO UPDATE SET updated_at = NOW()
-		`, s.symbol, s.pipSize, s.minVolume, s.maxVolume, s.maxDailyVolume, s.lotSize, s.tradingHours, s.defaultSLPips, s.defaultTPPips)
+			INSERT INTO symbol_configs (symbol_id, pip_size, price_digits, min_volume, max_volume, max_daily_volume, lot_size, trading_hours, default_sl_pips, default_tp_pips)
+			SELECT id, $2, $3, $4, $5, $6, $7, $8, $9, $10 FROM symbols WHERE symbol = $1
+			ON CONFLICT (symbol_id) DO UPDATE SET pip_size = $2, price_digits = $3, updated_at = NOW()
+		`, s.symbol, s.pipSize, s.priceDigits, s.minVolume, s.maxVolume, s.maxDailyVolume, s.lotSize, s.tradingHours, s.defaultSLPips, s.defaultTPPips)
 		if err != nil {
 			return err
 		}

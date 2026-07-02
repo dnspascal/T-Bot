@@ -451,10 +451,6 @@ func decodeTradeData(data []byte, pos OpenPosition) OpenPosition {
 }
 
 
-func decodeZigzag64(v uint64) int64 {
-	return int64((v >> 1) ^ -(v & 1))
-}
-
 func extractLenField(data []byte, targetField uint64) []byte {
 	i := 0
 	for i < len(data) {
@@ -905,10 +901,7 @@ func decodeVarint(b []byte) (uint64, int) {
 	return 0, 0
 }
 
-// encodeDealListReq queries all deals in [fromMs, toMs] (epoch ms).
-// Wire field offsets follow the cTrader pattern: proto field N → wire field N+1
-// (field 1 is reserved for the payloadType prefix).
-// ProtoOADealListReq fields: ctidTraderAccountId=1(wire2), fromTimestamp=3(wire4), toTimestamp=4(wire5), maxRows=5(wire6)
+
 func encodeDealListReq(accountID, fromMs, toMs int64, maxRows int32) []byte {
 	var b []byte
 	b = appendUint32(b, 1, ProtoOADealListReq)
@@ -921,8 +914,6 @@ func encodeDealListReq(accountID, fromMs, toMs int64, maxRows int32) []byte {
 	return b
 }
 
-// decodeDealListRes parses ProtoOADealListRes inner payload.
-// ProtoOADealListRes: ctidTraderAccountId=1(wire2), repeated deal=2(wire3).
 func decodeDealListRes(data []byte) []DealInfo {
 	var deals []DealInfo
 	i := 0
@@ -1013,20 +1004,17 @@ func decodeCtidAccount(data []byte) CtidAccount {
 	return acc
 }
 
-func encodeSymbolsListReq(accountID int64) []byte {
+func encodeSymbolByIdReq(accountID int64, symbolIDs []int64) []byte {
 	var b []byte
-	b = appendUint32(b, 1, ProtoOASymbolsListReq)
+	b = appendUint32(b, 1, ProtoOASymbolsListReq) // 2116 is actually the by-ID lookup on this server
 	b = appendInt64(b, 2, accountID)
+	for _, id := range symbolIDs {
+		b = appendInt64(b, 3, id)
+	}
 	return b
 }
 
-type LightSymbol struct {
-	SymbolID   int64
-	SymbolName string
-	Enabled    bool
-}
-
-func decodeSymbolsListRes(data []byte) []LightSymbol {
+func decodeSymbolByIdRes(data []byte) []LightSymbol {
 	var symbols []LightSymbol
 	i := 0
 	for i < len(data) {
@@ -1037,10 +1025,10 @@ func decodeSymbolsListRes(data []byte) []LightSymbol {
 		i += n
 		field := tag >> 3
 		wire := tag & 0x7
-		if field == 2 && wire == 2 { // repeated symbol
+		if field == 3 && wire == 2 { // repeated symbol entry
 			l, n2 := decodeVarint(data[i:])
 			i += n2
-			sym := decodeLightSymbol(data[i : i+int(l)])
+			sym := decodeFullSymbol(data[i : i+int(l)])
 			i += int(l)
 			symbols = append(symbols, sym)
 			continue
@@ -1050,8 +1038,9 @@ func decodeSymbolsListRes(data []byte) []LightSymbol {
 	return symbols
 }
 
-func decodeLightSymbol(data []byte) LightSymbol {
+func decodeFullSymbol(data []byte) LightSymbol {
 	var sym LightSymbol
+	var baseAsset, quoteAsset string
 	i := 0
 	for i < len(data) {
 		tag, n := decodeVarint(data[i:])
@@ -1066,21 +1055,32 @@ func decodeLightSymbol(data []byte) LightSymbol {
 			v, n2 := decodeVarint(data[i:])
 			i += n2
 			sym.SymbolID = int64(v)
-		case field == 2 && wire == 0: // enabled
-			v, n2 := decodeVarint(data[i:])
-			i += n2
-			sym.Enabled = v != 0
-		case field == 5 && wire == 2: // symbolName
+		case field == 23 && wire == 2: // quoteAsset name (e.g. "USD")
 			l, n2 := decodeVarint(data[i:])
 			i += n2
-			sym.SymbolName = string(data[i : i+int(l)])
+			quoteAsset = string(data[i : i+int(l)])
+			i += int(l)
+		case field == 40 && wire == 2: // baseAsset name (e.g. "EUR")
+			l, n2 := decodeVarint(data[i:])
+			i += n2
+			baseAsset = string(data[i : i+int(l)])
 			i += int(l)
 		default:
 			i = skipField(data, i, wire)
 		}
 	}
+	if baseAsset != "" && quoteAsset != "" {
+		sym.SymbolName = baseAsset + quoteAsset
+	}
 	return sym
 }
+
+type LightSymbol struct {
+	SymbolID   int64
+	SymbolName string
+	Enabled    bool
+}
+
 
 func payloadTypeOf(data []byte) uint32 {
 	i := 0

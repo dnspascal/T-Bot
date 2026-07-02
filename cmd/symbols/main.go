@@ -1,14 +1,12 @@
 package main
 
 import (
-	"context"
 	"fmt"
 	"log"
 	"sort"
 	"time"
 
 	"github.com/denismgaya/t-bot/internal/config"
-	"github.com/denismgaya/t-bot/internal/database"
 	"github.com/denismgaya/t-bot/internal/provider/ctrader/api"
 )
 
@@ -20,27 +18,26 @@ func main() {
 	if !cfg.EnableCTrader {
 		log.Fatal("cTrader not enabled in config")
 	}
+	if cfg.CTrader.RefreshToken == "" {
+		log.Fatal("CTRADER_REFRESH_TOKEN is empty")
+	}
 
-	ctx := context.Background()
-	pool, err := database.New(ctx, cfg.DatabaseURL, 2, 1)
+	accessToken, _, err := api.RefreshToken(cfg.CTrader.ClientID, cfg.CTrader.ClientSecret, cfg.CTrader.RefreshToken)
 	if err != nil {
-		log.Fatal("db connect:", err)
+		fmt.Println("Refresh token expired — starting OAuth login in browser...")
+		// Always use localhost for local dev OAuth — add http://localhost:8099/callback
+		// to your cTrader developer app's allowed redirect URIs.
+		accessToken, _, err = api.InitiateOAuthFlow(
+			cfg.CTrader.ClientID, cfg.CTrader.ClientSecret,
+			"http://localhost:8099/callback", 8099,
+		)
+		if err != nil {
+			log.Fatal("oauth flow:", err)
+		}
 	}
-	defer pool.Close()
+	fmt.Println("Token OK")
 
-	accessToken := cfg.CTrader.AccessToken
-	var dbToken string
-	if err := pool.QueryRow(ctx,
-		"SELECT value FROM bot_credentials WHERE key = 'ctrader_access_token'",
-	).Scan(&dbToken); err == nil && dbToken != "" {
-		accessToken = dbToken
-	}
-
-	if accessToken == "" {
-		log.Fatal("no cTrader access token found — run the bot first to authenticate")
-	}
-
-	client := api.NewClient(cfg.CTrader.Demo, cfg.CTrader.AccountID, cfg.CTrader.SymbolID)
+	client := api.NewClient(cfg.CTrader.Demo, cfg.CTrader.AccountID, cfg.CTrader.SymbolID, 100000.0)
 	if err := client.Connect(); err != nil {
 		log.Fatal("connect:", err)
 	}
@@ -72,11 +69,28 @@ func main() {
 	if err := client.AuthAccount(accessToken); err != nil {
 		log.Fatal("auth account:", err)
 	}
-	time.Sleep(2 * time.Second)
 
-	symbols, err := client.ListSymbols()
-	if err != nil {
-		log.Fatal("list symbols:", err)
+	// Scan IDs in batches until we find the range with valid symbols.
+	// ProtoOASymbolsListReq (2116) works as a by-ID lookup on this server;
+	// SYMBOL_NOT_FOUND returns immediately so empty batches are fast.
+	const batchSize = 500
+	const maxID = 50000
+	var symbols []api.LightSymbol
+	for start := int64(1); start <= maxID; start += batchSize {
+		ids := make([]int64, batchSize)
+		for i := range ids {
+			ids[i] = start + int64(i)
+		}
+		batch, err := client.GetSymbolsByIds(ids)
+		if err != nil {
+			log.Fatal("get symbols:", err)
+		}
+		if len(batch) > 0 {
+			fmt.Printf("Found %d symbols starting around ID %d\n", len(batch), start)
+			symbols = append(symbols, batch...)
+			break
+		}
+		fmt.Printf("IDs %d-%d: not found\n", start, start+batchSize-1)
 	}
 
 	sort.Slice(symbols, func(i, j int) bool {
@@ -91,5 +105,5 @@ func main() {
 		}
 		fmt.Printf("%-10d %-30s %v\n", s.SymbolID, s.SymbolName, s.Enabled)
 	}
-	fmt.Printf("\nTotal: %d symbols\n", len(symbols))
+	fmt.Printf("\nTotal with names: %d\n", len(symbols))
 }

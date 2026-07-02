@@ -3,13 +3,15 @@ package symbol
 import (
 	"context"
 	"fmt"
+	"math"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type SymbolLookup struct {
-	uuids    map[string]string
-	pipSizes map[string]float64
+	uuids        map[string]string
+	pipSizes     map[string]float64
+	priceDivisors map[string]float64
 }
 
 func (s *SymbolLookup) Get(name string) (string, error) {
@@ -28,9 +30,17 @@ func (s *SymbolLookup) GetPipSize(name string) (float64, error) {
 	return ps, nil
 }
 
+func (s *SymbolLookup) GetPriceDivisor(name string) (float64, error) {
+	d, ok := s.priceDivisors[name]
+	if !ok {
+		return 0, fmt.Errorf("price divisor not found for symbol: %s", name)
+	}
+	return d, nil
+}
+
 func LoadLookup(ctx context.Context, pool *pgxpool.Pool, symbolNames []string) (*SymbolLookup, error) {
 	rows, err := pool.Query(ctx,
-		`SELECT s.symbol, s.id, sc.pip_size
+		`SELECT s.symbol, s.id, sc.pip_size, sc.price_digits
 		 FROM symbols s
 		 JOIN symbol_configs sc ON sc.symbol_id = s.id
 		 WHERE s.symbol = ANY($1) AND sc.deleted_at IS NULL`,
@@ -43,14 +53,17 @@ func LoadLookup(ctx context.Context, pool *pgxpool.Pool, symbolNames []string) (
 
 	uuids := make(map[string]string)
 	pipSizes := make(map[string]float64)
+	priceDivisors := make(map[string]float64)
 	for rows.Next() {
 		var sym, uuid string
 		var pipSize float64
-		if err := rows.Scan(&sym, &uuid, &pipSize); err != nil {
+		var priceDigits int
+		if err := rows.Scan(&sym, &uuid, &pipSize, &priceDigits); err != nil {
 			return nil, fmt.Errorf("scan symbol: %w", err)
 		}
 		uuids[sym] = uuid
 		pipSizes[sym] = pipSize
+		priceDivisors[sym] = math.Pow(10, float64(priceDigits))
 	}
 
 	if err := rows.Err(); err != nil {
@@ -61,5 +74,5 @@ func LoadLookup(ctx context.Context, pool *pgxpool.Pool, symbolNames []string) (
 		return nil, fmt.Errorf("no symbols found in database")
 	}
 
-	return &SymbolLookup{uuids: uuids, pipSizes: pipSizes}, nil
+	return &SymbolLookup{uuids: uuids, pipSizes: pipSizes, priceDivisors: priceDivisors}, nil
 }

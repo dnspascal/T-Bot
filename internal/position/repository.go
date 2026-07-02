@@ -80,15 +80,15 @@ func (r *Repository) Close(ctx context.Context, provider, providerPositionID str
 	return nil
 }
 
-func (r *Repository) OpenByProvider(ctx context.Context, provider string) ([]Position, error) {
+func (r *Repository) OpenByProvider(ctx context.Context, provider, symbolID string) ([]Position, error) {
 	const q = `
 		SELECT id, provider, provider_position_id, provider_acct_id, symbol_id, side, volume,
 		       tier, open_price, current_sl, current_tp, swap, commission, used_margin,
 		       status, trailing_stop_loss, guaranteed_stop_loss, label, comment,
 		       open_timestamp, close_timestamp, created_at, updated_at
 		FROM positions
-		WHERE status = 'open' AND provider = $1`
-	rows, err := r.db.Query(ctx, q, provider)
+		WHERE status = 'open' AND provider = $1 AND symbol_id = $2`
+	rows, err := r.db.Query(ctx, q, provider, symbolID)
 	if err != nil {
 		return nil, fmt.Errorf("position.OpenByProvider: %w", err)
 	}

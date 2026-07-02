@@ -14,8 +14,8 @@ const (
 	TierVeryStrong = 3 
 
 	rsiMidline    = 50.0
-	rsiOversold   = 44.0
-	rsiOverbought = 56.0
+	rsiOversold   = 40.0
+	rsiOverbought = 60.0
 	srProximityMult  = 1.5
 	srAlignmentPips  = 7.0 // max pip gap between M15/M30 S/R levels to confirm same zone
 	slATRMult       = 1.5
@@ -24,7 +24,7 @@ const (
 	tpRangeBuffer   = 0.15
 	minRR           = 1.5
 	minATRPips      = 3.0 // M5 ATR below this means spread eats the SL — skip the trade
-	minH1ADXTrend   = 25.0 // H1 ADX below this means no real trend — block trending/breakout entries
+	minH1ADXTrend   = 20.0 // H1 ADX below this means no real trend — block trending/breakout entries
 )
 
 var confluenceTimeframes = []string{"M15", "M30", "H1", "H4"}
