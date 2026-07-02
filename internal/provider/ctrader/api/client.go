@@ -263,7 +263,10 @@ func (c *Client) handleMessage(payloadType uint32, payload []byte) {
 		}
 
 	case ProtoOASpotEvent:
-		bid, ask, ok := decodeSpotEvent(payload)
+		symID, bid, ask, ok := decodeSpotEvent(payload)
+		if ok && symID != c.symbolID {
+			return // ignore spot events from other symbols subscribed on this account
+		}
 		if ok {
 			bidF := float64(bid) / c.priceDivisor
 			askF := float64(ask) / c.priceDivisor

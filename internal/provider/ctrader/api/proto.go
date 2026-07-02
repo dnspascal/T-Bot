@@ -851,7 +851,7 @@ func decodeOAError(data []byte) (code, description string) {
 }
 
 
-func decodeSpotEvent(data []byte) (bid, ask uint64, ok bool) {
+func decodeSpotEvent(data []byte) (symbolID int64, bid, ask uint64, ok bool) {
 	i := 0
 	for i < len(data) {
 		tag, n := decodeVarint(data[i:])
@@ -861,11 +861,13 @@ func decodeSpotEvent(data []byte) (bid, ask uint64, ok bool) {
 		i += n
 		field := tag >> 3
 		wire := tag & 0x7
-		switch  wire{
+		switch wire {
 		case 0: // varint
 			val, n2 := decodeVarint(data[i:])
 			i += n2
 			switch field {
+			case 2:
+				symbolID = int64(val)
 			case 4:
 				bid = val
 			case 5:
@@ -879,10 +881,10 @@ func decodeSpotEvent(data []byte) (bid, ask uint64, ok bool) {
 		case 5: // 32-bit
 			i += 4
 		default:
-			return 0, 0, false
+			return 0, 0, 0, false
 		}
 	}
-	return bid, ask, true
+	return symbolID, bid, ask, true
 }
 
 func decodeVarint(b []byte) (uint64, int) {
