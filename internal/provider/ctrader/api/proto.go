@@ -866,7 +866,7 @@ func decodeSpotEvent(data []byte) (symbolID int64, bid, ask uint64, ok bool) {
 			val, n2 := decodeVarint(data[i:])
 			i += n2
 			switch field {
-			case 2:
+			case 3:
 				symbolID = int64(val)
 			case 4:
 				bid = val
