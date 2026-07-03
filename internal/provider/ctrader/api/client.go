@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log/slog"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -36,8 +37,9 @@ type Client struct {
 	symbolID     int64
 	priceDivisor float64
 
-	mu     sync.Mutex
-	authed bool
+	mu          sync.Mutex
+	authed      bool
+	spotLogOnce atomic.Bool
 	PriceCh     chan PriceEvent
 	ExecutionCh chan ExecutionEvent
 	TrendbarCh  chan Trendbar 
@@ -264,7 +266,10 @@ func (c *Client) handleMessage(payloadType uint32, payload []byte) {
 
 	case ProtoOASpotEvent:
 		symID, bid, ask, ok := decodeSpotEvent(payload)
-		if ok && symID != c.symbolID {
+		if c.spotLogOnce.CompareAndSwap(false, true) {
+			slog.Info("first spot event decoded", "symID", symID, "wantSymID", c.symbolID, "ok", ok, "bid", bid)
+		}
+		if ok && symID != 0 && symID != c.symbolID {
 			return // ignore spot events from other symbols subscribed on this account
 		}
 		if ok {
