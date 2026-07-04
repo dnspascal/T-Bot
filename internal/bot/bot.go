@@ -616,6 +616,9 @@ func (b *Bot) onExecution(ctx context.Context, exec provider.ExecutionEvent) {
 				go b.refreshBalance()
 			}
 		} else {
+			if !b.pendingOrder {
+				return // open fill for an order we didn't place — another bot's trade
+			}
 			b.pendingOrder = false
 			b.recordOpenFill(ctx, exec)
 		}
@@ -877,18 +880,21 @@ func (b *Bot) recordCloseFill(ctx context.Context, exec provider.ExecutionEvent)
 		return
 	}
 	deal := exec.Deal
+	provPosID := fmt.Sprintf("%d", deal.PositionID)
+
+	tracked, ok := b.registry.Get(provPosID)
+	if !ok {
+		return // close fill for a position we didn't open — another bot's trade
+	}
+
 	cl := deal.Close
 	provOrderID := fmt.Sprintf("%d", deal.OrderID)
-	provPosID := fmt.Sprintf("%d", deal.PositionID)
 
 	var maxFav, maxAdv *float64
 	var closeReason *string
-	var openTime time.Time
-	if tracked, ok := b.registry.Get(provPosID); ok {
-		maxFav = &tracked.MaxFavorable
-		maxAdv = &tracked.MaxAdverse
-		openTime = tracked.OpenTime
-	}
+	openTime := tracked.OpenTime
+	maxFav = &tracked.MaxFavorable
+	maxAdv = &tracked.MaxAdverse
 	if pc, ok := b.pendingCloseReasons[provPosID]; ok {
 		closeReason = &pc.reason
 		delete(b.pendingCloseReasons, provPosID)
@@ -982,6 +988,9 @@ func (b *Bot) recordBrokerClose(ctx context.Context, exec provider.ExecutionEven
 	posID := exec.ClosedPositionID
 
 	tracked, hasTracked := b.registry.Get(posID)
+	if !hasTracked {
+		return // broker-close for a position we didn't open — another bot's trade
+	}
 	b.registry.Remove(posID)
 
 	var closeReason string
