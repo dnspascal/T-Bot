@@ -1,0 +1,765 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Strategy Analysis — v1 Baseline</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Lato:wght@400;700;900&display=swap" rel="stylesheet">
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  font-family: 'Lato', system-ui, sans-serif;
+  font-size: 15px;
+  line-height: 1.65;
+  color: #000000;
+  background: #ffffff;
+  padding-bottom: 80px;
+}
+
+/* ── Header ── */
+.header {
+  background: #fff;
+  border-bottom: 1px solid #e5e7eb;
+  padding: 28px 40px;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 16px;
+}
+.header-version {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  color: #2563eb;
+  background: #ebf1ff;
+  padding: 3px 10px;
+  border-radius: 4px;
+  display: inline-block;
+  margin-bottom: 8px;
+}
+.header h1 {
+  font-size: 22px;
+  font-weight: 900;
+  letter-spacing: -.3px;
+  margin-bottom: 6px;
+}
+.header-meta {
+  font-size: 13px;
+  color: #6b7280;
+  display: flex;
+  gap: 20px;
+  flex-wrap: wrap;
+}
+.header-chips {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-shrink: 0;
+}
+.chip {
+  font-size: 12px;
+  font-weight: 700;
+  padding: 5px 12px;
+  border-radius: 20px;
+  border: 1px solid #e5e7eb;
+  color: #6b7280;
+}
+.chip.live {
+  color: #059669;
+  background: #ecfdf5;
+  border-color: #a7f3d0;
+}
+
+/* ── Page ── */
+.page {
+  max-width: 900px;
+  margin: 0 auto;
+  padding: 40px 20px 0;
+}
+
+/* ── Section ── */
+.section { margin-bottom: 44px; }
+
+.section-eyebrow {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+  color: #6b7280;
+  margin-bottom: 10px;
+}
+.section-title {
+  font-size: 18px;
+  font-weight: 900;
+  letter-spacing: -.2px;
+  margin-bottom: 16px;
+}
+
+/* ── Cards ── */
+.card {
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+/* ── Concept boxes ── */
+.concept-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+.concept {
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  padding: 20px;
+}
+.concept-title {
+  font-size: 13px;
+  font-weight: 700;
+  margin-bottom: 6px;
+}
+.concept p {
+  font-size: 13px;
+  color: #6b7280;
+  line-height: 1.55;
+}
+
+/* ── Notice ── */
+.notice {
+  border-left: 3px solid #f59e0b;
+  background: #fffbeb;
+  padding: 12px 16px;
+  font-size: 13px;
+  color: #92400e;
+  border-radius: 0 6px 6px 0;
+  line-height: 1.5;
+}
+
+/* ── Filter table ── */
+.filter-row {
+  display: grid;
+  grid-template-columns: 190px 1fr;
+  border-bottom: 1px solid #e5e7eb;
+}
+.filter-row:last-child { border-bottom: none; }
+.filter-label {
+  padding: 16px 18px;
+  background: #ffffff;
+  border-right: 1px solid #e5e7eb;
+  font-size: 13px;
+  font-weight: 700;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.filter-code {
+  font-size: 11px;
+  font-weight: 400;
+  color: #2563eb;
+}
+.filter-desc {
+  padding: 16px 18px;
+  font-size: 13px;
+  color: #6b7280;
+  line-height: 1.55;
+}
+
+/* ── Divider ── */
+hr {
+  border: none;
+  border-top: 1px solid #e5e7eb;
+  margin: 40px 0;
+}
+
+/* ── Tables ── */
+.table-wrap { overflow-x: auto; }
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13.5px;
+  font-variant-numeric: tabular-nums;
+}
+thead tr { background: #ffffff; }
+th {
+  padding: 10px 16px;
+  text-align: left;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: .07em;
+  text-transform: uppercase;
+  color: #6b7280;
+  border-bottom: 1px solid #e5e7eb;
+  white-space: nowrap;
+}
+th.r, td.r { text-align: right; }
+td {
+  padding: 12px 16px;
+  border-bottom: 1px solid #e5e7eb;
+  vertical-align: middle;
+}
+tr:last-child td { border-bottom: none; }
+tr:nth-child(even) td { background: #ffffff; }
+tr.base td { background: #ebf1ff; font-weight: 700; }
+
+.cname { font-weight: 700; font-size: 13.5px; }
+.csub { font-size: 12px; font-weight: 400; color: #6b7280; margin-top: 2px; }
+
+.num { font-size: 13px; }
+
+.pct {
+  font-size: 13px;
+  font-weight: 700;
+}
+.pct.good   { color: #059669; }
+.pct.bad    { color: #dc2626; }
+.pct.neutral { color: #6b7280; }
+
+.delta {
+  font-size: 11px;
+  font-weight: 700;
+  padding: 2px 7px;
+  border-radius: 4px;
+}
+.delta.up   { background: #ecfdf5; color: #059669; }
+.delta.down { background: #fef2f2; color: #dc2626; }
+.delta.flat { background: #ffffff; color: #6b7280; }
+
+/* ── Findings ── */
+.finding {
+  display: grid;
+  grid-template-columns: 28px 1fr;
+  gap: 14px;
+  padding: 18px 20px;
+  border-bottom: 1px solid #e5e7eb;
+  align-items: start;
+}
+.finding:last-child { border-bottom: none; }
+.finding-icon {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  font-weight: 900;
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+.finding-icon.bad    { background: #fef2f2; color: #dc2626; }
+.finding-icon.good   { background: #ecfdf5; color: #059669; }
+.finding-icon.warn   { background: #fffbeb; color: #d97706; }
+.finding-icon.neutral { background: #ffffff; color: #6b7280; }
+.finding strong { font-size: 14px; font-weight: 700; display: block; margin-bottom: 4px; }
+.finding p { font-size: 13px; color: #6b7280; line-height: 1.55; max-width: 65ch; }
+
+/* ── Steps ── */
+.steps { display: flex; flex-direction: column; gap: 10px; }
+.step {
+  display: grid;
+  grid-template-columns: 32px 1fr;
+  gap: 14px;
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  padding: 16px 18px;
+  align-items: start;
+}
+.step-num {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: #ebf1ff;
+  color: #2563eb;
+  font-size: 12px;
+  font-weight: 900;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+.step strong { font-size: 14px; font-weight: 700; display: block; margin-bottom: 4px; }
+.step p { font-size: 13px; color: #6b7280; line-height: 1.55; }
+
+/* ── Query toggle ── */
+details { margin-top: 12px; }
+summary {
+  cursor: pointer;
+  list-style: none;
+  font-size: 12px;
+  font-weight: 700;
+  color: #2563eb;
+  letter-spacing: .02em;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 6px 0;
+  user-select: none;
+}
+summary::before { content: '▶'; font-size: 9px; transition: transform .15s; }
+details[open] summary::before { transform: rotate(90deg); }
+pre {
+  background: #ffffff;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  padding: 16px;
+  overflow-x: auto;
+  font-family: 'SF Mono','Fira Code',monospace;
+  font-size: 12px;
+  line-height: 1.6;
+  color: #6b7280;
+  margin-top: 8px;
+}
+
+@media (max-width: 600px) {
+  .header { padding: 20px; }
+  .page { padding: 24px 14px 0; }
+  .concept-row { grid-template-columns: 1fr; }
+  .filter-row { grid-template-columns: 1fr; }
+  .filter-label { border-right: none; border-bottom: 1px solid #e5e7eb; }
+}
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div>
+    <div class="header-version">v1 · Baseline</div>
+    <h1>Strategy Analysis</h1>
+    <div class="header-meta">
+      <span>2025-07-05</span>
+      <span>14 days of data</span>
+      <span>EURUSD · XAUUSD</span>
+    </div>
+  </div>
+  <div class="header-chips">
+    <span class="chip live">Bot running</span>
+    <span class="chip">1,361 setups</span>
+  </div>
+</div>
+
+<div class="page">
+
+  <div class="section">
+    <div class="section-eyebrow">Before you read</div>
+    <div class="concept-row">
+      <div class="concept">
+        <div class="concept-title">What is a setup</div>
+        <p>Every completed M5 candle where the market state is trending up, trending down, or breakout. That is one moment the bot could open a position. Over 14 days there were <strong>1,361 setups</strong> across both symbols — about 97 per day.</p>
+      </div>
+      <div class="concept">
+        <div class="concept-title">What counts as a win</div>
+        <p>For each setup we look at the next 60 minutes of M5 candles. If price moved at least 1 ATR in the right direction — up for BUY, down for SELL — it is a win. This is a proxy for real trade outcome, not exact SL/TP, but it is consistent across all conditions.</p>
+      </div>
+    </div>
+    <div class="notice">Break-even win rate at 1.67 R:R (1.5× ATR stop, 2.5× ATR target) is 37.5%. Any strategy below that loses money long-term regardless of how it is managed.</div>
+  </div>
+
+  <hr>
+
+  <div class="section">
+    <div class="section-eyebrow">Strategy v1 — Active filters</div>
+    <div class="section-title">What the bot checks before opening a trade</div>
+    <div class="card">
+      <div class="filter-row">
+        <div class="filter-label">
+          Base signal
+          <span class="filter-code">regime ∈ {trending_up, trending_down, breakout}</span>
+        </div>
+        <div class="filter-desc">The foundation. Every M5 candle where the indicator has classified an active trend or breakout. Without this there is no trade. This produced 1,361 possible entries over 14 days.</div>
+      </div>
+      <div class="filter-row">
+        <div class="filter-label">
+          Session filter
+          <span class="filter-code">utc_hour BETWEEN 7 AND 21</span>
+        </div>
+        <div class="filter-desc">Only trade during London and New York sessions. Blocks Tokyo hours (23:00–06:59 UTC). The assumption was that Tokyo has lower liquidity and noisier signals.</div>
+      </div>
+      <div class="filter-row">
+        <div class="filter-label">
+          RSI zone
+          <span class="filter-code">BUY: RSI 50–60 · SELL: RSI 40–50</span>
+        </div>
+        <div class="filter-desc">RSI must be in a tight momentum band. Above 50 confirms upward momentum for a BUY but below 60 so it is not already overbought. Same logic inverted for SELL. This is a very narrow window.</div>
+      </div>
+      <div class="filter-row">
+        <div class="filter-label">
+          H1 ADX minimum
+          <span class="filter-code">h1_adx &gt; 20</span>
+        </div>
+        <div class="filter-desc">The H1 timeframe must show real trend strength. If H1 ADX is below 20, the H1 is basically flat, and any M5 trend signal might be noise going nowhere.</div>
+      </div>
+      <div class="filter-row">
+        <div class="filter-label">
+          M15 gate
+          <span class="filter-code">M15 ranging → H1 must confirm</span>
+        </div>
+        <div class="filter-desc">When M15 is ranging (consolidating), H1 must be trending in the same direction as the M5 signal. If M15 is not ranging, this gate does not apply. Prevents entering an M5 breakout inside a larger range that H1 does not support.</div>
+      </div>
+    </div>
+  </div>
+
+  <hr>
+
+  <div class="section">
+    <div class="section-eyebrow">Test 1 — Each condition alone</div>
+    <div class="section-title">What each filter selects from the full pool</div>
+    <p style="font-size: 13px; color: #6b7280; max-width: 65ch; margin-bottom: 16px;">Apply only that one condition to all 1,361 base setups. Shows which conditions select better or worse setups. Does not show how conditions interact when combined — that is Test 2.</p>
+    <div class="card">
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Condition tested alone</th>
+              <th class="r">Setups</th>
+              <th class="r">Wins</th>
+              <th class="r">Losses</th>
+              <th class="r">Win rate</th>
+              <th class="r">Loss rate</th>
+              <th class="r">Edge vs BE</th>
+              <th class="r">vs Base</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr class="base">
+              <td><div class="cname">00. Base signal — no filters<div class="csub">All 1,361 M5 trending/breakout setups</div></div></td>
+              <td class="r num">1,361</td>
+              <td class="r num">704</td>
+              <td class="r num">657</td>
+              <td class="r"><span class="pct neutral">51.7%</span></td>
+              <td class="r"><span class="pct neutral">48.3%</span></td>
+              <td class="r"><span class="delta up">+14.2%</span></td>
+              <td class="r">—</td>
+            </tr>
+            <tr>
+              <td><div class="cname">01. Session filter<div class="csub">London/NY only, 07:00–21:59 UTC</div></div></td>
+              <td class="r num">918</td>
+              <td class="r num">432</td>
+              <td class="r num">486</td>
+              <td class="r"><span class="pct bad">47.1%</span></td>
+              <td class="r"><span class="pct bad">52.9%</span></td>
+              <td class="r"><span class="delta up">+9.6%</span></td>
+              <td class="r"><span class="delta down">−4.6%</span></td>
+            </tr>
+            <tr>
+              <td><div class="cname">02. RSI zone<div class="csub">BUY 50–60 / SELL 40–50</div></div></td>
+              <td class="r num">389</td>
+              <td class="r num">190</td>
+              <td class="r num">199</td>
+              <td class="r"><span class="pct bad">48.8%</span></td>
+              <td class="r"><span class="pct bad">51.2%</span></td>
+              <td class="r"><span class="delta up">+11.3%</span></td>
+              <td class="r"><span class="delta down">−2.9%</span></td>
+            </tr>
+            <tr>
+              <td><div class="cname">03. M5 ADX &gt; 20<div class="csub">M5 trend has strength</div></div></td>
+              <td class="r num">1,169</td>
+              <td class="r num">597</td>
+              <td class="r num">572</td>
+              <td class="r"><span class="pct neutral">51.1%</span></td>
+              <td class="r"><span class="pct neutral">48.9%</span></td>
+              <td class="r"><span class="delta up">+13.6%</span></td>
+              <td class="r"><span class="delta flat">−0.6%</span></td>
+            </tr>
+            <tr>
+              <td><div class="cname">04. H1 ADX &gt; 20<div class="csub">H1 trend conviction required</div></div></td>
+              <td class="r num">934</td>
+              <td class="r num">461</td>
+              <td class="r num">473</td>
+              <td class="r"><span class="pct bad">49.4%</span></td>
+              <td class="r"><span class="pct bad">50.6%</span></td>
+              <td class="r"><span class="delta up">+11.9%</span></td>
+              <td class="r"><span class="delta down">−2.3%</span></td>
+            </tr>
+            <tr>
+              <td><div class="cname">05. M15 ranging<div class="csub">M5 trend happening inside M15 range</div></div></td>
+              <td class="r num">297</td>
+              <td class="r num">147</td>
+              <td class="r num">150</td>
+              <td class="r"><span class="pct bad">49.5%</span></td>
+              <td class="r"><span class="pct bad">50.5%</span></td>
+              <td class="r"><span class="delta up">+12.0%</span></td>
+              <td class="r"><span class="delta down">−2.2%</span></td>
+            </tr>
+            <tr>
+              <td><div class="cname">06. M15 trending same direction<div class="csub">M15 and M5 agree on direction</div></div></td>
+              <td class="r num">480</td>
+              <td class="r num">218</td>
+              <td class="r num">262</td>
+              <td class="r"><span class="pct bad">45.4%</span></td>
+              <td class="r"><span class="pct bad">54.6%</span></td>
+              <td class="r"><span class="delta up">+7.9%</span></td>
+              <td class="r"><span class="delta down">−6.3%</span></td>
+            </tr>
+            <tr>
+              <td><div class="cname">07. H1 same direction as M5<div class="csub">Trading with the H1 trend</div></div></td>
+              <td class="r num">164</td>
+              <td class="r num">60</td>
+              <td class="r num">104</td>
+              <td class="r"><span class="pct bad">36.6%</span></td>
+              <td class="r"><span class="pct bad">63.4%</span></td>
+              <td class="r"><span class="delta down">−0.9%</span></td>
+              <td class="r"><span class="delta down">−15.1%</span></td>
+            </tr>
+            <tr>
+              <td><div class="cname">08. H1 opposite direction<div class="csub">Trading against the H1 trend</div></div></td>
+              <td class="r num">207</td>
+              <td class="r num">106</td>
+              <td class="r num">101</td>
+              <td class="r"><span class="pct neutral">51.2%</span></td>
+              <td class="r"><span class="pct neutral">48.8%</span></td>
+              <td class="r"><span class="delta up">+13.7%</span></td>
+              <td class="r"><span class="delta flat">−0.5%</span></td>
+            </tr>
+            <tr>
+              <td><div class="cname">09. Volume above MA<div class="csub">This candle's volume exceeds average</div></div></td>
+              <td class="r num">674</td>
+              <td class="r num">393</td>
+              <td class="r num">281</td>
+              <td class="r"><span class="pct good">58.3%</span></td>
+              <td class="r"><span class="pct good">41.7%</span></td>
+              <td class="r"><span class="delta up">+20.8%</span></td>
+              <td class="r"><span class="delta up">+6.6%</span></td>
+            </tr>
+            <tr>
+              <td><div class="cname">10. Near support or resistance<div class="csub">Entry within 1.5 ATR of S/R level</div></div></td>
+              <td class="r num">142</td>
+              <td class="r num">86</td>
+              <td class="r num">56</td>
+              <td class="r"><span class="pct good">60.6%</span></td>
+              <td class="r"><span class="pct good">39.4%</span></td>
+              <td class="r"><span class="delta up">+23.1%</span></td>
+              <td class="r"><span class="delta up">+8.9%</span></td>
+            </tr>
+            <tr>
+              <td><div class="cname">11. All conditions combined<div class="csub">The current live strategy</div></div></td>
+              <td class="r num">175</td>
+              <td class="r num">78</td>
+              <td class="r num">97</td>
+              <td class="r"><span class="pct bad">44.6%</span></td>
+              <td class="r"><span class="pct bad">55.4%</span></td>
+              <td class="r"><span class="delta up">+7.1%</span></td>
+              <td class="r"><span class="delta down">−7.1%</span></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+    <details>
+      <summary>View SQL query</summary>
+      <pre>-- File: analysis/v1_baseline_2025-07-05/queries/test1_each_condition_solo.sql
+-- Run: ssh makini "psql 'DB_URL'" &lt; test1_each_condition_solo.sql</pre>
+    </details>
+  </div>
+
+  <hr>
+
+  <div class="section">
+    <div class="section-eyebrow">Test 2 — Remove one condition at a time</div>
+    <div class="section-title">What each filter contributes inside the real strategy</div>
+    <p style="font-size: 13px; color: #6b7280; max-width: 65ch; margin-bottom: 16px;">Start from the current strategy (all conditions active). Remove one condition at a time and measure the change. If removing something makes win rate go up, that condition is hurting. If adding something makes it go up, that condition would help.</p>
+    <div class="card">
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Change made</th>
+              <th class="r">Setups</th>
+              <th class="r">Wins</th>
+              <th class="r">Losses</th>
+              <th class="r">Win rate</th>
+              <th class="r">Loss rate</th>
+              <th class="r">Edge vs BE</th>
+              <th class="r">vs Current</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr class="base">
+              <td><div class="cname">Current strategy — nothing changed<div class="csub">Session + RSI zone + H1 ADX&gt;20 + M15 gate</div></div></td>
+              <td class="r num">175</td>
+              <td class="r num">78</td>
+              <td class="r num">97</td>
+              <td class="r"><span class="pct neutral">44.6%</span></td>
+              <td class="r"><span class="pct neutral">55.4%</span></td>
+              <td class="r"><span class="delta up">+7.1%</span></td>
+              <td class="r">—</td>
+            </tr>
+            <tr>
+              <td><div class="cname">Remove session filter<div class="csub">Allow Tokyo hours. Keep RSI + H1 ADX + M15 gate.</div></div></td>
+              <td class="r num">212</td>
+              <td class="r num">100</td>
+              <td class="r num">112</td>
+              <td class="r"><span class="pct good">47.2%</span></td>
+              <td class="r"><span class="pct good">52.8%</span></td>
+              <td class="r"><span class="delta up">+9.7%</span></td>
+              <td class="r"><span class="delta up">+2.6%</span></td>
+            </tr>
+            <tr>
+              <td><div class="cname">Remove RSI zone<div class="csub">No RSI requirement. Keep session + H1 ADX + M15 gate.</div></div></td>
+              <td class="r num">580</td>
+              <td class="r num">253</td>
+              <td class="r num">327</td>
+              <td class="r"><span class="pct bad">43.6%</span></td>
+              <td class="r"><span class="pct bad">56.4%</span></td>
+              <td class="r"><span class="delta up">+6.1%</span></td>
+              <td class="r"><span class="delta down">−1.0%</span></td>
+            </tr>
+            <tr>
+              <td><div class="cname">Remove H1 ADX &gt; 20<div class="csub">Allow weak H1 trend. Keep session + RSI + M15 gate.</div></div></td>
+              <td class="r num">221</td>
+              <td class="r num">100</td>
+              <td class="r num">121</td>
+              <td class="r"><span class="pct neutral">45.2%</span></td>
+              <td class="r"><span class="pct neutral">54.8%</span></td>
+              <td class="r"><span class="delta up">+7.7%</span></td>
+              <td class="r"><span class="delta flat">+0.6%</span></td>
+            </tr>
+            <tr>
+              <td><div class="cname">Remove M15 gate<div class="csub">No H1 confirmation needed. Keep session + RSI + H1 ADX.</div></div></td>
+              <td class="r num">199</td>
+              <td class="r num">84</td>
+              <td class="r num">115</td>
+              <td class="r"><span class="pct bad">42.2%</span></td>
+              <td class="r"><span class="pct bad">57.8%</span></td>
+              <td class="r"><span class="delta up">+4.7%</span></td>
+              <td class="r"><span class="delta down">−2.4%</span></td>
+            </tr>
+            <tr>
+              <td><div class="cname">Add volume above MA<div class="csub">All current conditions + volume must exceed average.</div></div></td>
+              <td class="r num">53</td>
+              <td class="r num">26</td>
+              <td class="r num">27</td>
+              <td class="r"><span class="pct good">49.1%</span></td>
+              <td class="r"><span class="pct good">50.9%</span></td>
+              <td class="r"><span class="delta up">+11.6%</span></td>
+              <td class="r"><span class="delta up">+4.5%</span></td>
+            </tr>
+            <tr>
+              <td><div class="cname">Add near S/R level<div class="csub">All current conditions + entry within 1.5 ATR of support/resistance.</div></div></td>
+              <td class="r num">35</td>
+              <td class="r num">19</td>
+              <td class="r num">16</td>
+              <td class="r"><span class="pct good">54.3%</span></td>
+              <td class="r"><span class="pct good">45.7%</span></td>
+              <td class="r"><span class="delta up">+16.8%</span></td>
+              <td class="r"><span class="delta up">+9.7%</span></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+    <details>
+      <summary>View SQL query</summary>
+      <pre>-- File: analysis/v1_baseline_2025-07-05/queries/test2_drop_one_condition.sql
+-- Run: ssh makini "psql 'DB_URL'" &lt; test2_drop_one_condition.sql</pre>
+    </details>
+  </div>
+
+  <hr>
+
+  <div class="section">
+    <div class="section-eyebrow">Findings</div>
+    <div class="section-title">What the numbers actually mean</div>
+    <div class="card">
+      <div class="finding">
+        <div class="finding-icon bad">✗</div>
+        <div>
+          <strong>Session filter is blocking good trades</strong>
+          <p>Removing it adds 37 more trades and raises win rate from 44.6% to 47.2%. Those Tokyo-session setups that were being blocked are winning more often than London/NY ones. The assumption that Tokyo is noisier is not supported by this data.</p>
+        </div>
+      </div>
+      <div class="finding">
+        <div class="finding-icon neutral">≈</div>
+        <div>
+          <strong>RSI zone adds little benefit but removing it floods trades</strong>
+          <p>Dropping RSI gives 580 setups (vs 175 now) but win rate drops 1%. The narrow 50–60 / 40–50 window is selecting a slightly better subset but not enough to justify cutting 77% of entries. A wider band might perform better.</p>
+        </div>
+      </div>
+      <div class="finding">
+        <div class="finding-icon good">✓</div>
+        <div>
+          <strong>M15 gate is earning its place</strong>
+          <p>Removing it drops win rate by 2.4%. This is the one filter confirmed to add value inside the combined strategy. When M15 is ranging and H1 does not confirm the direction, those trades do worse. Keep this.</p>
+        </div>
+      </div>
+      <div class="finding">
+        <div class="finding-icon neutral">≈</div>
+        <div>
+          <strong>H1 ADX &gt; 20 is close to neutral</strong>
+          <p>Removing it improves win rate by 0.6% and adds 46 more trades. Not a strong signal either way. It is not hurting badly but it is not helping much either.</p>
+        </div>
+      </div>
+      <div class="finding">
+        <div class="finding-icon good">↑</div>
+        <div>
+          <strong>Volume confirmation genuinely helps</strong>
+          <p>Adding volume above MA pushes win rate to 49.1% (+4.5%). The downside is it cuts trades from 175 to 53 — too small a sample to be certain. Promising, but needs more data before making it a required filter.</p>
+        </div>
+      </div>
+      <div class="finding">
+        <div class="finding-icon good">↑</div>
+        <div>
+          <strong>Near S/R is the strongest signal found</strong>
+          <p>Adding near S/R gives 54.3% win rate (+9.7%). Only 35 trades though — too small to be certain. Consistent with Test 1 result (60.6%). Worth tracking as data builds up.</p>
+        </div>
+      </div>
+      <div class="finding">
+        <div class="finding-icon warn">!</div>
+        <div>
+          <strong>The combined strategy underperforms the raw signal</strong>
+          <p>The base M5 signal alone wins 51.7%. The current strategy with all filters wins 44.6%. The filters together are making it worse — still above the 37.5% breakeven, but the strategy is actively filtering out good trades.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <hr>
+
+  <div class="section">
+    <div class="section-eyebrow">Next — v2 candidates</div>
+    <div class="section-title">What to test in the next version</div>
+    <div class="steps">
+      <div class="step">
+        <div class="step-num">1</div>
+        <div>
+          <strong>Remove the session filter</strong>
+          <p>The data says Tokyo setups within this strategy win more often, not less. Run without the session filter for 2–4 weeks and compare live results to this baseline.</p>
+        </div>
+      </div>
+      <div class="step">
+        <div class="step-num">2</div>
+        <div>
+          <strong>Widen the RSI zone</strong>
+          <p>Try 45–65 for BUY and 35–55 for SELL instead of the current tight 50–60 / 40–50. Re-run Test 1 and Test 2 and see if the wider window improves win rate without flooding bad trades.</p>
+        </div>
+      </div>
+      <div class="step">
+        <div class="step-num">3</div>
+        <div>
+          <strong>Keep the M15 gate</strong>
+          <p>This is the one filter that is confirmed to add value. Do not touch it in v2.</p>
+        </div>
+      </div>
+      <div class="step">
+        <div class="step-num">4</div>
+        <div>
+          <strong>Watch volume and S/R as data grows</strong>
+          <p>Both show strong signals but the sample is too small (35–53 trades) to make them required. Collect another month of data then re-run this exact same analysis on those conditions.</p>
+        </div>
+      </div>
+    </div>
+    <div class="notice" style="margin-top: 16px;">14 days and ~175 setups per combination is a small sample. Every percentage here has uncertainty. Treat these as direction, not proof. Re-run this analysis after every strategy change and after 4+ weeks of new clean data.</div>
+  </div>
+
+</div>
+</body>
+</html>
