@@ -2,7 +2,6 @@ package bot
 
 import (
 	"slices"
-	"time"
 
 	"github.com/denismgaya/t-bot/internal/indicator"
 )
@@ -56,40 +55,7 @@ type rangeConfirmation struct {
 	bonusTFs            int
 }
 
-type fxSession int
-
-const (
-	sessionDead    fxSession = iota // 22:00–22:59 UTC: true gap between NY close and Sydney ramp
-	sessionTokyo                    // 23:00–06:59 UTC: Sydney/Tokyo
-	sessionLondon                   // 07:00–12:59 UTC: London only
-	sessionLondonNY                 // 13:00–15:59 UTC: peak overlap
-	sessionNewYork                  // 16:00–21:59 UTC: NY only (full window)
-)
-
-func classifySession(h int) fxSession {
-	switch {
-	case h == 22:
-		return sessionDead
-	case h >= 13 && h < 16:
-		return sessionLondonNY
-	case h >= 7 && h < 13:
-		return sessionLondon
-	case h >= 16 && h < 22:
-		return sessionNewYork // 16:00–21:59 UTC
-	default: // 23:00–06:59
-		return sessionTokyo
-	}
-}
-
-func inActiveSession(londonNYOnly bool) bool {
-	s := classifySession(time.Now().UTC().Hour())
-	if londonNYOnly {
-		return s == sessionLondon || s == sessionLondonNY || s == sessionNewYork
-	}
-	return s != sessionDead
-}
-
-func evaluateEntry(states map[string]indicator.MarketState, currentPrice float64, londonNYOnly bool, pipSize float64) EntryResult {
+func evaluateEntry(states map[string]indicator.MarketState, currentPrice float64, pipSize float64) EntryResult {
 	hold := func(reason string) EntryResult {
 		return EntryResult{Signal: "HOLD", Reason: reason}
 	}
@@ -97,9 +63,6 @@ func evaluateEntry(states map[string]indicator.MarketState, currentPrice float64
 	m5, ok := states["M5"]
 	if !ok || !m5.IsWarmedUp {
 		return hold("M5 not warmed up")
-	}
-	if !inActiveSession(londonNYOnly) {
-		return hold("outside active session")
 	}
 	if isEODWindow() {
 		return hold("EOD window — no new entries before dead session")

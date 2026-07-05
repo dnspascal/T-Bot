@@ -45,7 +45,6 @@ type Config struct {
 
 	DevMode bool
 
-	LondonNYOnly     bool 
 	SendTestPosition bool
 }
 
@@ -125,7 +124,6 @@ func Load() (*Config, error) {
 		Period: getEnv("TRADING_PERIOD", "M5"),
 
 		DevMode:          getEnv("DEV_MODE", "false") == "true",
-		LondonNYOnly:     getEnv("LONDON_NY_ONLY", "true") == "true",
 		SendTestPosition: getEnv("DEV_MODE", "false") == "true" && getEnv("SEND_TEST_POSITION", "false") == "true",
 	}
 
