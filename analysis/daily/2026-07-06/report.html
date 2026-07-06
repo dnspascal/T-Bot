@@ -1,0 +1,486 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Daily Analysis — 2026-07-06</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Lato:wght@400;700;900&display=swap" rel="stylesheet">
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  font-family: 'Lato', system-ui, sans-serif;
+  font-size: 15px;
+  line-height: 1.65;
+  color: #000;
+  background: #fff;
+  padding-bottom: 80px;
+}
+.header {
+  background: #fff;
+  border-bottom: 1px solid #e5e7eb;
+  padding: 28px 40px;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 16px;
+}
+.header-eyebrow {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  color: #2563eb;
+  background: #ebf1ff;
+  padding: 3px 10px;
+  border-radius: 4px;
+  display: inline-block;
+  margin-bottom: 8px;
+}
+.header h1 { font-size: 22px; font-weight: 900; letter-spacing: -.3px; margin-bottom: 6px; }
+.header-meta { font-size: 13px; color: #6b7280; display: flex; gap: 20px; flex-wrap: wrap; }
+.chip {
+  font-size: 12px;
+  font-weight: 700;
+  padding: 5px 12px;
+  border-radius: 20px;
+  border: 1px solid #e5e7eb;
+  color: #6b7280;
+}
+.chip.loss { color: #dc2626; background: #fef2f2; border-color: #fecaca; }
+.page { max-width: 900px; margin: 0 auto; padding: 40px 20px 0; }
+.section { margin-bottom: 44px; }
+.section-eyebrow {
+  font-size: 11px; font-weight: 700; letter-spacing: .1em;
+  text-transform: uppercase; color: #6b7280; margin-bottom: 10px;
+}
+.section-title { font-size: 18px; font-weight: 900; letter-spacing: -.2px; margin-bottom: 16px; }
+hr { border: none; border-top: 1px solid #e5e7eb; margin: 40px 0; }
+.card { background: #fff; border: 1px solid #e5e7eb; border-radius: 8px; overflow: hidden; }
+.notice {
+  border-left: 3px solid #f59e0b;
+  background: #fffbeb;
+  padding: 12px 16px;
+  font-size: 13px;
+  color: #92400e;
+  border-radius: 0 6px 6px 0;
+  line-height: 1.5;
+}
+.notice.green { border-color: #059669; background: #ecfdf5; color: #065f46; }
+
+/* trade cards */
+.trade-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+.trade-card {
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  overflow: hidden;
+}
+.trade-header {
+  padding: 12px 16px;
+  font-size: 13px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid #e5e7eb;
+}
+.trade-header.win { background: #ecfdf5; }
+.trade-header.loss { background: #fef2f2; }
+.outcome {
+  font-size: 11px;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 4px;
+}
+.outcome.win { background: #059669; color: #fff; }
+.outcome.loss { background: #dc2626; color: #fff; }
+.trade-body { padding: 14px 16px; }
+.trade-row {
+  display: flex;
+  justify-content: space-between;
+  font-size: 13px;
+  padding: 4px 0;
+  border-bottom: 1px solid #e5e7eb;
+}
+.trade-row:last-child { border-bottom: none; }
+.trade-label { color: #6b7280; }
+.trade-val { font-weight: 700; }
+
+/* tf grid */
+.tf-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 0;
+}
+.tf-cell {
+  padding: 12px 14px;
+  border-right: 1px solid #e5e7eb;
+  border-bottom: 1px solid #e5e7eb;
+  font-size: 13px;
+}
+.tf-cell:nth-child(4n) { border-right: none; }
+.tf-label { font-size: 11px; font-weight: 700; color: #6b7280; text-transform: uppercase; letter-spacing: .05em; margin-bottom: 4px; }
+.regime { font-weight: 700; font-size: 13px; }
+.regime.up { color: #059669; }
+.regime.down { color: #dc2626; }
+.regime.ranging { color: #6b7280; }
+.regime.breakout { color: #d97706; }
+.tf-sub { font-size: 12px; color: #6b7280; margin-top: 2px; }
+
+/* tables */
+.table-wrap { overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+thead tr { background: #fff; }
+th {
+  padding: 10px 16px;
+  text-align: left;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: .07em;
+  text-transform: uppercase;
+  color: #6b7280;
+  border-bottom: 1px solid #e5e7eb;
+  white-space: nowrap;
+}
+th.r, td.r { text-align: right; }
+td { padding: 12px 16px; border-bottom: 1px solid #e5e7eb; vertical-align: middle; }
+tr:last-child td { border-bottom: none; }
+tr.base td { background: #ebf1ff; font-weight: 700; }
+.pct { font-weight: 700; }
+.pct.good { color: #059669; }
+.pct.bad { color: #dc2626; }
+.pct.neutral { color: #6b7280; }
+.delta { font-size: 11px; font-weight: 700; padding: 2px 7px; border-radius: 4px; }
+.delta.up { background: #ecfdf5; color: #059669; }
+.delta.down { background: #fef2f2; color: #dc2626; }
+.delta.flat { background: #f4f6fb; color: #6b7280; }
+.cname { font-weight: 700; }
+.csub { font-size: 12px; font-weight: 400; color: #6b7280; margin-top: 2px; }
+
+/* findings */
+.finding {
+  display: grid;
+  grid-template-columns: 28px 1fr;
+  gap: 14px;
+  padding: 18px 20px;
+  border-bottom: 1px solid #e5e7eb;
+  align-items: start;
+}
+.finding:last-child { border-bottom: none; }
+.fi {
+  width: 26px; height: 26px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 12px; font-weight: 900; flex-shrink: 0; margin-top: 1px;
+}
+.fi.bad { background: #fef2f2; color: #dc2626; }
+.fi.good { background: #ecfdf5; color: #059669; }
+.fi.warn { background: #fffbeb; color: #d97706; }
+.finding strong { font-size: 14px; font-weight: 700; display: block; margin-bottom: 4px; }
+.finding p { font-size: 13px; color: #6b7280; line-height: 1.55; max-width: 65ch; }
+
+@media (max-width: 700px) {
+  .header { padding: 20px; }
+  .page { padding: 24px 14px 0; }
+  .trade-grid { grid-template-columns: 1fr; }
+  .tf-grid { grid-template-columns: repeat(2, 1fr); }
+}
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div>
+    <div class="header-eyebrow">Daily Analysis</div>
+    <h1>Monday 2026-07-06</h1>
+    <div class="header-meta">
+      <span>EURUSD · XAUUSD</span>
+      <span>3 trades opened</span>
+      <span>1 win · 2 losses</span>
+    </div>
+  </div>
+  <div style="display:flex;gap:8px;align-items:center;flex-shrink:0;">
+    <span class="chip loss">Net −$0.34</span>
+    <span class="chip">Session filter removed</span>
+  </div>
+</div>
+
+<div class="page">
+
+  <div class="section">
+    <div class="section-eyebrow">EURUSD — Today's trades</div>
+    <div class="section-title">3 trades, 1 win, 2 losses</div>
+    <div class="trade-grid">
+
+      <div class="trade-card">
+        <div class="trade-header win">
+          <span>12:05 SELL</span>
+          <span class="outcome win">TP HIT</span>
+        </div>
+        <div class="trade-body">
+          <div class="trade-row"><span class="trade-label">Open</span><span class="trade-val">1.14201</span></div>
+          <div class="trade-row"><span class="trade-label">TP</span><span class="trade-val">1.14102</span></div>
+          <div class="trade-row"><span class="trade-label">SL</span><span class="trade-val">1.14262</span></div>
+          <div class="trade-row"><span class="trade-label">Closed</span><span class="trade-val">13:06</span></div>
+          <div class="trade-row"><span class="trade-label">Net P&amp;L</span><span class="trade-val" style="color:#059669">+$0.94</span></div>
+        </div>
+      </div>
+
+      <div class="trade-card">
+        <div class="trade-header loss">
+          <span>14:00 BUY</span>
+          <span class="outcome loss">SL HIT</span>
+        </div>
+        <div class="trade-body">
+          <div class="trade-row"><span class="trade-label">Open</span><span class="trade-val">1.14196</span></div>
+          <div class="trade-row"><span class="trade-label">TP</span><span class="trade-val">1.14291</span></div>
+          <div class="trade-row"><span class="trade-label">SL</span><span class="trade-val">1.14139</span></div>
+          <div class="trade-row"><span class="trade-label">Closed</span><span class="trade-val">14:44</span></div>
+          <div class="trade-row"><span class="trade-label">Net P&amp;L</span><span class="trade-val" style="color:#dc2626">−$0.59</span></div>
+        </div>
+      </div>
+
+      <div class="trade-card">
+        <div class="trade-header loss">
+          <span>16:20 BUY</span>
+          <span class="outcome loss">SL HIT</span>
+        </div>
+        <div class="trade-body">
+          <div class="trade-row"><span class="trade-label">Open</span><span class="trade-val">1.14208</span></div>
+          <div class="trade-row"><span class="trade-label">TP</span><span class="trade-val">1.14315</span></div>
+          <div class="trade-row"><span class="trade-label">SL</span><span class="trade-val">1.14145</span></div>
+          <div class="trade-row"><span class="trade-label">Closed</span><span class="trade-val">16:45</span></div>
+          <div class="trade-row"><span class="trade-label">Net P&amp;L</span><span class="trade-val" style="color:#dc2626">−$0.69</span></div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <hr>
+
+  <div class="section">
+    <div class="section-eyebrow">Trade analysis — what happened</div>
+    <div class="section-title">Multi-timeframe state at each entry</div>
+
+    <p style="font-size:13px;color:#6b7280;margin-bottom:16px;max-width:65ch;">The regime and ADX at each timeframe when the bot entered. This shows whether the entry was with or against the higher timeframe trend.</p>
+
+    <div class="card" style="margin-bottom:12px;">
+      <div style="padding:14px 18px;border-bottom:1px solid #e5e7eb;font-weight:700;font-size:14px;display:flex;justify-content:space-between;align-items:center;">
+        <span>12:05 SELL @ 1.14201</span>
+        <span class="outcome win">TP HIT +$0.94</span>
+      </div>
+      <div class="tf-grid">
+        <div class="tf-cell"><div class="tf-label">H1</div><div class="regime breakout">Breakout</div><div class="tf-sub">ADX 22.6 · RSI 29.9</div></div>
+        <div class="tf-cell"><div class="tf-label">M30</div><div class="regime down">Trending down</div><div class="tf-sub">ADX 29.0 · RSI 33.3</div></div>
+        <div class="tf-cell"><div class="tf-label">M15</div><div class="regime down">Trending down</div><div class="tf-sub">ADX 35.8 · RSI 37.2</div></div>
+        <div class="tf-cell"><div class="tf-label">M5</div><div class="regime ranging">Ranging</div><div class="tf-sub">ADX 23.9 · RSI 50.0</div></div>
+      </div>
+      <div style="padding:14px 18px;font-size:13px;color:#6b7280;border-top:1px solid #e5e7eb;">
+        M5 ranging near resistance. M15 and M30 both trending down — SELL aligned with higher TF pressure. Price drifted slowly south for an hour before a sharp drop at 12:50 hit TP at 1.14102.
+      </div>
+    </div>
+
+    <div class="card" style="margin-bottom:12px;">
+      <div style="padding:14px 18px;border-bottom:1px solid #e5e7eb;font-weight:700;font-size:14px;display:flex;justify-content:space-between;align-items:center;">
+        <span>14:00 BUY @ 1.14196</span>
+        <span class="outcome loss">SL HIT −$0.59</span>
+      </div>
+      <div class="tf-grid">
+        <div class="tf-cell"><div class="tf-label">H1</div><div class="regime down">Trending down</div><div class="tf-sub">ADX 25.8 · RSI 32.5</div></div>
+        <div class="tf-cell"><div class="tf-label">M30</div><div class="regime down">Trending down</div><div class="tf-sub">ADX 37.0 · RSI 38.6</div></div>
+        <div class="tf-cell"><div class="tf-label">M15</div><div class="regime down">Trending down</div><div class="tf-sub">ADX 39.2 · RSI 42.9</div></div>
+        <div class="tf-cell"><div class="tf-label">M5</div><div class="regime ranging">Ranging</div><div class="tf-sub">ADX 14.3 · RSI 52.2</div></div>
+      </div>
+      <div style="padding:14px 18px;font-size:13px;color:#6b7280;border-top:1px solid #e5e7eb;">
+        H1, M30, M15 — all three trending down with strong ADX. M5 ranging near support triggered BUY. But a bounce into three strong downtrends doesn't hold. Price bled down from open and hit SL at 14:44.
+      </div>
+    </div>
+
+    <div class="card">
+      <div style="padding:14px 18px;border-bottom:1px solid #e5e7eb;font-weight:700;font-size:14px;display:flex;justify-content:space-between;align-items:center;">
+        <span>16:20 BUY @ 1.14208</span>
+        <span class="outcome loss">SL HIT −$0.69</span>
+      </div>
+      <div class="tf-grid">
+        <div class="tf-cell"><div class="tf-label">H1</div><div class="regime breakout">Breakout</div><div class="tf-sub">ADX 28.0 · RSI 29.8</div></div>
+        <div class="tf-cell"><div class="tf-label">M30</div><div class="regime down">Trending down</div><div class="tf-sub">ADX 41.8 · RSI 35.4</div></div>
+        <div class="tf-cell"><div class="tf-label">M15</div><div class="regime breakout">Breakout</div><div class="tf-sub">ADX 34.1 · RSI 52.0</div></div>
+        <div class="tf-cell"><div class="tf-label">M5</div><div class="regime breakout">Breakout</div><div class="tf-sub">ADX 15.1 · RSI 62.3</div></div>
+      </div>
+      <div style="padding:14px 18px;font-size:13px;color:#6b7280;border-top:1px solid #e5e7eb;">
+        M5 and M15 broke up, but M30 was trending down with ADX 41.8 — strong established trend. H1 RSI at 29.8 means the down move was mature. The M5/M15 breakout was a counter-trend bounce that failed. One sharp candle at 16:45 dropped through SL.
+      </div>
+    </div>
+  </div>
+
+  <hr>
+
+  <div class="section">
+    <div class="section-eyebrow">XAUUSD — Gold signals today</div>
+    <div class="section-title">Zero trades opened all day</div>
+    <p style="font-size:13px;color:#6b7280;max-width:65ch;margin-bottom:16px;">Gold had clear trending signals all day but the RSI zone filter blocked every single one. Gold's RSI swings harder than EURUSD — when it trends down, RSI goes below 40. When it trends up, RSI goes above 60. The 40–50 / 50–60 window designed for EURUSD catches nothing on gold.</p>
+    <div class="card">
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Period (EAT)</th>
+              <th>Regime</th>
+              <th class="r">ADX</th>
+              <th class="r">RSI</th>
+              <th>Why blocked</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>06:30 – 10:25</td>
+              <td><span style="color:#dc2626;font-weight:700;">Trending down</span></td>
+              <td class="r">31–49</td>
+              <td class="r">28–42</td>
+              <td style="color:#6b7280;font-size:13px;">RSI mostly &lt;40 — below SELL zone (40–50)</td>
+            </tr>
+            <tr>
+              <td>10:50 – 11:00</td>
+              <td><span style="color:#059669;font-weight:700;">Trending up</span></td>
+              <td class="r">25</td>
+              <td class="r">66–67</td>
+              <td style="color:#6b7280;font-size:13px;">RSI &gt;60 — above BUY zone (50–60)</td>
+            </tr>
+            <tr>
+              <td>12:20 – 13:05</td>
+              <td><span style="color:#dc2626;font-weight:700;">Trending down</span></td>
+              <td class="r">26–37</td>
+              <td class="r">32–40</td>
+              <td style="color:#6b7280;font-size:13px;">RSI mostly &lt;40 — below SELL zone</td>
+            </tr>
+            <tr>
+              <td>13:45 – 15:15</td>
+              <td><span style="color:#059669;font-weight:700;">Trending up</span></td>
+              <td class="r">25–34</td>
+              <td class="r">54–68</td>
+              <td style="color:#6b7280;font-size:13px;">RSI &gt;60 most of the time — above BUY zone</td>
+            </tr>
+            <tr>
+              <td>15:45 – 16:35</td>
+              <td><span style="color:#dc2626;font-weight:700;">Trending down</span></td>
+              <td class="r">34–38</td>
+              <td class="r">22–47</td>
+              <td style="color:#6b7280;font-size:13px;">RSI mostly &lt;40 — below SELL zone</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <hr>
+
+  <div class="section">
+    <div class="section-eyebrow">Test 3 — M30 counter-trend block</div>
+    <div class="section-title">Should we block entries when M30 trends against us?</div>
+    <p style="font-size:13px;color:#6b7280;max-width:65ch;margin-bottom:16px;">Hypothesis: both losses today had M30 strongly trending down while the bot entered BUY. Adding a rule to block that should help. Tested against 14 days of historical data.</p>
+    <div class="card">
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Condition</th>
+              <th class="r">Setups</th>
+              <th class="r">Wins</th>
+              <th class="r">Losses</th>
+              <th class="r">Win %</th>
+              <th class="r">Edge vs BE</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr class="base">
+              <td><div class="cname">Base (no filters)<div class="csub">All trending/breakout setups</div></div></td>
+              <td class="r">1,427</td><td class="r">752</td><td class="r">675</td>
+              <td class="r"><span class="pct neutral">52.7%</span></td>
+              <td class="r"><span class="delta up">+15.2%</span></td>
+            </tr>
+            <tr>
+              <td><div class="cname">M30 not counter-trend (standalone)<div class="csub">Block BUY if M30 trending_down, block SELL if M30 trending_up</div></div></td>
+              <td class="r">1,215</td><td class="r">655</td><td class="r">560</td>
+              <td class="r"><span class="pct good">53.9%</span></td>
+              <td class="r"><span class="delta up">+16.4%</span></td>
+            </tr>
+            <tr>
+              <td><div class="cname">H1 not counter-trend (standalone)<div class="csub">Block BUY if H1 trending_down, block SELL if H1 trending_up</div></div></td>
+              <td class="r">1,181</td><td class="r">623</td><td class="r">558</td>
+              <td class="r"><span class="pct neutral">52.8%</span></td>
+              <td class="r"><span class="delta up">+15.3%</span></td>
+            </tr>
+            <tr class="base">
+              <td><div class="cname">Current strategy (baseline)<div class="csub">RSI zone + H1 ADX&gt;20 + M15 gate · no session filter</div></div></td>
+              <td class="r">225</td><td class="r">103</td><td class="r">122</td>
+              <td class="r"><span class="pct neutral">45.8%</span></td>
+              <td class="r"><span class="delta up">+8.3%</span></td>
+            </tr>
+            <tr>
+              <td><div class="cname">Current strategy + M30 block<div class="csub">Add: block entry when M30 trends against trade direction</div></div></td>
+              <td class="r">175</td><td class="r">76</td><td class="r">99</td>
+              <td class="r"><span class="pct bad">43.4%</span></td>
+              <td class="r"><span class="delta down">+5.9%</span></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <hr>
+
+  <div class="section">
+    <div class="section-eyebrow">Findings</div>
+    <div class="section-title">What today taught us</div>
+    <div class="card">
+      <div class="finding">
+        <div class="fi bad">✗</div>
+        <div>
+          <strong>Both losses were counter-trend BUYs into strong downtrends</strong>
+          <p>The 14:00 BUY had H1 + M30 + M15 all trending down. The 16:20 BUY had M30 strongly trending down (ADX 41.8). The bot entered on M5 signals against the full higher TF picture.</p>
+        </div>
+      </div>
+      <div class="finding">
+        <div class="fi warn">!</div>
+        <div>
+          <strong>M30 block doesn't help inside the current strategy</strong>
+          <p>Standalone the M30 block looks good (+1.2% win rate). But combined with current filters it drops from 45.8% to 43.4%. The 50 setups it blocks have a 54% win rate — the strategy is actually picking good counter-trend entries. Adding the block removes the best ones.</p>
+        </div>
+      </div>
+      <div class="finding">
+        <div class="fi warn">!</div>
+        <div>
+          <strong>Gold RSI zone is wrong for this asset</strong>
+          <p>Gold had strong trending signals all day but the RSI zone filter (50–60 BUY / 40–50 SELL) blocked everything. Gold RSI goes more extreme than EURUSD — when trending, RSI is already past the window. This needs a gold-specific RSI threshold or removal of RSI for gold entirely.</p>
+        </div>
+      </div>
+      <div class="finding">
+        <div class="fi good">✓</div>
+        <div>
+          <strong>Session filter removal is already showing</strong>
+          <p>Current strategy baseline is now 225 setups at 45.8% — up from 175 setups at 44.6% in v1. More entries, better win rate. The change made Monday 6 July.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <hr>
+
+  <div class="section">
+    <div class="section-eyebrow">Next</div>
+    <div class="section-title">What to investigate for v2</div>
+    <div class="notice green">
+      <strong>Don't add M30 block.</strong> The data says no — it removes good trades. Leave the strategy as-is for now and collect more data.
+    </div>
+    <div class="notice" style="margin-top:12px;">
+      <strong>Gold RSI:</strong> The RSI zone (50–60 / 40–50) is designed for EURUSD. For gold, either widen the window significantly (45–70 / 30–55) or run a separate test with RSI removed entirely for XAUUSD. Gold has been live but never traded — that's a wasted instrument.
+    </div>
+  </div>
+
+</div>
+</body>
+</html>
