@@ -750,7 +750,7 @@ func (b *Bot) onTradeSignal(ctx context.Context, result EntryResult, price provi
 		slog.Error("insert order record failed", "err", err)
 	}
 
-	if _, err = b.provider.PlaceMarketOrder(ctx, result.Signal, volume, result.SLPips, result.TPPips); err != nil {
+	if _, err = b.provider.PlaceMarketOrder(ctx, result.Signal, volume, result.SLPips*b.pipSize, result.TPPips*b.pipSize); err != nil {
 		slog.Error("order failed", "err", err)
 		b.orders.UpdateError(ctx, orderID, "SEND_FAILED", err.Error())
 		b.events.Insert(ctx, "error", map[string]any{
@@ -1319,7 +1319,7 @@ func (b *Bot) sendTestPosition(ctx context.Context) {
 		slog.Error("DEV: test order record insert failed", "err", err)
 	}
 
-	if _, err := b.provider.PlaceMarketOrder(ctx, "BUY", testVolume, testSLPips, testTPPips); err != nil {
+	if _, err := b.provider.PlaceMarketOrder(ctx, "BUY", testVolume, testSLPips*b.pipSize, testTPPips*b.pipSize); err != nil {
 		slog.Error("DEV: test position placement failed", "provider", b.provider.Name(), "err", err)
 		b.orders.UpdateError(ctx, orderID, "SEND_FAILED", err.Error())
 		return

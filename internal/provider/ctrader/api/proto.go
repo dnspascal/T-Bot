@@ -85,20 +85,20 @@ func encodeClosePositionReq(accountID, positionID, volume int64) []byte {
 	return b
 }
 
-func encodeNewOrderReq(accountID, symbolID int64, side uint32, volume int64, sl, tp float64) []byte {
+func encodeNewOrderReq(accountID, symbolID int64, side uint32, volume int64, slDist, tpDist, priceDivisor float64) []byte {
 	var b []byte
 	b = appendUint32(b, 1, ProtoOANewOrderReq)
 	b = appendInt64(b, 2, accountID)
 	b = appendInt64(b, 3, symbolID)
-	b = appendUint32(b, 4, 1) 
+	b = appendUint32(b, 4, 1)
 	b = appendUint32(b, 5, side)
 	b = appendInt64(b, 6, volume)
 
-	if sl > 0 {
-		b = appendInt64(b, 19, int64(sl*10)) // relativeStopLoss in ticks (pips × 10)
+	if slDist > 0 {
+		b = appendInt64(b, 19, int64(math.Round(slDist*priceDivisor)))
 	}
-	if tp > 0 {
-		b = appendInt64(b, 20, int64(tp*10)) // relativeTakeProfit in ticks (pips × 10)
+	if tpDist > 0 {
+		b = appendInt64(b, 20, int64(math.Round(tpDist*priceDivisor)))
 	}
 	return b
 }
