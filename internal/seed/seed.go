@@ -49,7 +49,7 @@ func SeedSymbols(ctx context.Context, db *pgxpool.Pool) error {
 			exchange:         "ctrader",
 			exchangeSymbolID: "41",
 			pipSize:          0.10,
-			priceDigits:      2,
+			priceDigits:      5,
 			minVolume:        100,
 			maxVolume:        50000,
 			maxDailyVolume:   200000,
