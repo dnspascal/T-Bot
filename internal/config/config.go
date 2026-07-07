@@ -46,6 +46,10 @@ type Config struct {
 	DevMode bool
 
 	SendTestPosition bool
+
+	TelegramToken   string
+	WebhookSecret   string
+	WebhookPort     int
 }
 
 func Load() (*Config, error) {
@@ -109,6 +113,11 @@ func Load() (*Config, error) {
 		return nil, fmt.Errorf("MAX_DAILY_LOSS_PCT must be a number: %w", err)
 	}
 
+	webhookPort, err := strconv.Atoi(getEnv("WEBHOOK_PORT", "8090"))
+	if err != nil {
+		return nil, fmt.Errorf("WEBHOOK_PORT must be a number: %w", err)
+	}
+
 	cfg := &Config{
 		DatabaseURL:     mustEnv("DATABASE_URL"),
 		CTrader:         ctraderCfg,
@@ -125,6 +134,10 @@ func Load() (*Config, error) {
 
 		DevMode:          getEnv("DEV_MODE", "false") == "true",
 		SendTestPosition: getEnv("DEV_MODE", "false") == "true" && getEnv("SEND_TEST_POSITION", "false") == "true",
+
+		TelegramToken: getEnv("TELEGRAM_BOT_TOKEN", ""),
+		WebhookSecret: getEnv("WEBHOOK_SECRET", ""),
+		WebhookPort:   webhookPort,
 	}
 
 	return cfg, nil

@@ -1,0 +1,11 @@
+# Add this block to your Caddyfile on the makini server.
+# Caddy auto-provisions the Let's Encrypt TLS cert.
+#
+# Steps:
+#   1. Point DNS: signal.fx.denismgaya.com → server IP (A record)
+#   2. Add this block to /etc/caddy/Caddyfile
+#   3. sudo systemctl reload caddy
+
+signal.fx.denismgaya.com {
+    reverse_proxy localhost:8090
+}

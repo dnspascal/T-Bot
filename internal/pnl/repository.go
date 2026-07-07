@@ -59,6 +59,25 @@ func (r *Repository) Today(ctx context.Context, symbolID string) (float64, error
 	return v, nil
 }
 
+func (r *Repository) TodayFull(ctx context.Context, symbolID string) (*DailyPnL, error) {
+	const q = `
+		SELECT id, date, symbol_id, realized_pnl, gross_profit, total_commission, total_swap,
+		       trade_count, win_count, loss_count, avg_round_trip_ms, avg_slippage_points, updated_at
+		FROM daily_pnl WHERE date = CURRENT_DATE AND symbol_id = $1`
+	var d DailyPnL
+	err := r.db.QueryRow(ctx, q, symbolID).Scan(
+		&d.ID, &d.Date, &d.SymbolID, &d.RealizedPnL, &d.GrossProfit, &d.TotalCommission, &d.TotalSwap,
+		&d.TradeCount, &d.WinCount, &d.LossCount, &d.AvgRoundTripMs, &d.AvgSlippagePoints, &d.UpdatedAt,
+	)
+	if err != nil {
+		if err.Error() == "no rows in result set" {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("pnl.TodayFull: %w", err)
+	}
+	return &d, nil
+}
+
 func (r *Repository) All(ctx context.Context) ([]DailyPnL, error) {
 	const q = `
 		SELECT id, date, symbol_id, realized_pnl, gross_profit, total_commission, total_swap,

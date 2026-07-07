@@ -5,15 +5,17 @@ import (
 	"fmt"
 	"log"
 	"log/slog"
+	"net/http"
 	"sync"
 	"time"
 
-	"github.com/denismgaya/t-bot/internal/provider/ctrader/api"
 	"github.com/denismgaya/t-bot/internal/config"
 	"github.com/denismgaya/t-bot/internal/marketstate"
+	"github.com/denismgaya/t-bot/internal/notify"
 	"github.com/denismgaya/t-bot/internal/provider"
 	"github.com/denismgaya/t-bot/internal/provider/binance"
 	"github.com/denismgaya/t-bot/internal/provider/ctrader"
+	"github.com/denismgaya/t-bot/internal/provider/ctrader/api"
 )
 
 func main() {
@@ -40,6 +42,23 @@ func main() {
 		"enableCTrader": cfg.EnableCTrader,
 		"enableBinance": cfg.EnableBinance,
 	}, 0)
+
+	// --- Telegram / notify setup ---
+	dispatcher := notify.NewDispatcher(svc.DB.Pool)
+	var tgChannel *notify.TelegramChannel
+	if cfg.TelegramToken != "" {
+		tgChannel = notify.NewTelegramChannel(cfg.TelegramToken)
+		dispatcher.Register(tgChannel)
+
+		if cfg.WebhookSecret != "" {
+			webhookURL := fmt.Sprintf("https://signal.fx.denismgaya.com/webhook/%s", cfg.WebhookSecret)
+			if err := tgChannel.RegisterWebhook(ctx, webhookURL); err != nil {
+				slog.Warn("telegram: setWebhook failed", "err", err)
+			} else {
+				slog.Info("telegram: webhook registered", "url", webhookURL)
+			}
+		}
+	}
 
 	provMgr := provider.NewManager()
 	var enabledProviders []string
@@ -87,6 +106,16 @@ func main() {
 	}
 
 
+	// Collect live bot controllers for command handling
+	var botsMu sync.Mutex
+	var tradingInstances []botController
+
+	registerTradingInstance := func(b botController) {
+		botsMu.Lock()
+		tradingInstances = append(tradingInstances, b)
+		botsMu.Unlock()
+	}
+
 	var wg sync.WaitGroup
 
 	if cfg.EnableCTrader {
@@ -94,7 +123,7 @@ func main() {
 		authResult := authResults["ctrader"]
 
 		wg.Go(func() {
-			startBotForProvider(ctx, cfg, svc, prov, cfg.CTraderSymbol, authResult, botStart)
+			startBotForProvider(ctx, cfg, svc, prov, cfg.CTraderSymbol, authResult, botStart, dispatcher, registerTradingInstance)
 		})
 	}
 
@@ -103,8 +132,30 @@ func main() {
 		authResult := authResults["binance"]
 
 		wg.Go(func() {
-			startBotForProvider(ctx, cfg, svc, prov, cfg.BinanceSymbol, authResult, botStart)
+			startBotForProvider(ctx, cfg, svc, prov, cfg.BinanceSymbol, authResult, botStart, dispatcher, registerTradingInstance)
 		})
+	}
+
+	// Start webhook HTTP server (one per process, not per bot)
+	if tgChannel != nil && cfg.WebhookSecret != "" {
+		go func() {
+			// Give bots a moment to register before we start accepting commands
+			time.Sleep(2 * time.Second)
+			handler := newTelegramCommandHandler(tgChannel, svc, func() []botController {
+				botsMu.Lock()
+				defer botsMu.Unlock()
+				return tradingInstances
+			})
+			mux := http.NewServeMux()
+			mux.HandleFunc("/webhook/", tgChannel.WebhookHandler(cfg.WebhookSecret, func(u notify.Update) {
+				handler.Handle(ctx, u)
+			}))
+			addr := fmt.Sprintf(":%d", cfg.WebhookPort)
+			slog.Info("telegram: webhook server listening", "addr", addr)
+			if err := http.ListenAndServe(addr, mux); err != nil {
+				slog.Error("telegram: webhook server error", "err", err)
+			}
+		}()
 	}
 
 	wg.Wait()
@@ -123,6 +174,8 @@ func startBotForProvider(
 	symbol string,
 	authResult *provider.AuthResult,
 	botStart time.Time,
+	dispatcher notify.Dispatcher,
+	registerTradingInstance func(botController),
 ) {
 
 	defer func() {
@@ -142,7 +195,8 @@ func startBotForProvider(
 		return
 	}
 
-	botResult := initializeBot(ctx, cfg, svc, prov, symbol, symbolUUID, authResult)
+	botResult := initializeBot(ctx, cfg, svc, prov, symbol, symbolUUID, authResult, dispatcher)
+	registerTradingInstance(botResult.Bot)
 
 	warmer := marketstate.NewWarmer(prov, botResult.ProcessorMgr, 100)
 	if err := warmer.WarmupAllTimeframes(ctx, symbol); err != nil {

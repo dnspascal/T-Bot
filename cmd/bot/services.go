@@ -9,6 +9,7 @@ import (
 	"github.com/denismgaya/t-bot/internal/event"
 	"github.com/denismgaya/t-bot/internal/fill"
 	"github.com/denismgaya/t-bot/internal/marketstate"
+	"github.com/denismgaya/t-bot/internal/notify"
 	"github.com/denismgaya/t-bot/internal/order"
 	"github.com/denismgaya/t-bot/internal/pnl"
 	"github.com/denismgaya/t-bot/internal/position"
@@ -34,6 +35,7 @@ type Repositories struct {
 	Events      *event.Repository
 	Snapshots   *snapshot.Repository
 	MarketState marketstate.Repository
+	Subscribers *notify.SubscriberRepo
 }
 
 type Services struct {
@@ -74,6 +76,7 @@ func initServices(ctx context.Context, cfg *config.Config) (*Services, error) {
 		Events:      event.New(pool),
 		Snapshots:   snapshot.New(pool),
 		MarketState: marketstate.NewPostgresRepository(pool),
+		Subscribers: notify.NewSubscriberRepo(pool),
 	}
 
 	return &Services{

@@ -21,3 +21,4 @@ coverage/
 !.env.example
 /migrate
 logs/
+symbols

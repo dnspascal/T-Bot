@@ -8,6 +8,7 @@ import (
 	"github.com/denismgaya/t-bot/internal/bot"
 	"github.com/denismgaya/t-bot/internal/config"
 	"github.com/denismgaya/t-bot/internal/marketstate"
+	"github.com/denismgaya/t-bot/internal/notify"
 	"github.com/denismgaya/t-bot/internal/provider"
 	"github.com/denismgaya/t-bot/internal/risk"
 )
@@ -19,7 +20,7 @@ type BotInitResult struct {
 	Balance      float64
 }
 
-func initializeBot(ctx context.Context, cfg *config.Config, svc *Services, prov provider.Provider, symbol string, symbolUUID string, authResult *provider.AuthResult) *BotInitResult {
+func initializeBot(ctx context.Context, cfg *config.Config, svc *Services, prov provider.Provider, symbol string, symbolUUID string, authResult *provider.AuthResult, dispatcher notify.Dispatcher) *BotInitResult {
 	balance := authResult.Balance
 
 	todayLoss, err := svc.Repos.PnLs.Today(ctx, symbolUUID)
@@ -63,7 +64,7 @@ func initializeBot(ctx context.Context, cfg *config.Config, svc *Services, prov 
 		lotUnit = 100 // gold micro lot in cTrader API units
 	}
 
-	tradingBot := bot.New(cfg, prov, symbol, symbolUUID, authResult.AccountID, pipSize, lotUnit, svc.DB.Pool, riskMgr, balance, authResult.Leverage, svc.Lookup, svc.Repos.Ticks, svc.Repos.Candles, svc.Repos.Signals, svc.Repos.Orders, svc.Repos.Fills, svc.Repos.Positions, svc.Repos.PnLs, svc.Repos.Events, processorMgr)
+	tradingBot := bot.New(cfg, prov, symbol, symbolUUID, authResult.AccountID, pipSize, lotUnit, svc.DB.Pool, riskMgr, balance, authResult.Leverage, svc.Lookup, svc.Repos.Ticks, svc.Repos.Candles, svc.Repos.Signals, svc.Repos.Orders, svc.Repos.Fills, svc.Repos.Positions, svc.Repos.PnLs, svc.Repos.Events, processorMgr, dispatcher)
 
 	return &BotInitResult{
 		Bot:          tradingBot,

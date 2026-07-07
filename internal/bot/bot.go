@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"maps"
+	"math"
 	"sync"
 	"time"
 
@@ -14,6 +15,7 @@ import (
 	"github.com/denismgaya/t-bot/internal/fill"
 	"github.com/denismgaya/t-bot/internal/indicator"
 	"github.com/denismgaya/t-bot/internal/marketstate"
+	"github.com/denismgaya/t-bot/internal/notify"
 	"github.com/denismgaya/t-bot/internal/order"
 	"github.com/denismgaya/t-bot/internal/pnl"
 	"github.com/denismgaya/t-bot/internal/position"
@@ -68,9 +70,15 @@ type Bot struct {
 
 	pendingCloseReasons map[string]pendingClose
 
+	dispatcher notify.Dispatcher
+
+	pausedMu sync.Mutex
+	paused   bool
+
 	refresherOnce      sync.Once
 	tickWriterOnce     sync.Once
 	weekendCloserOnce  sync.Once
+	dailySummaryOnce   sync.Once
 
 	tickCh      chan tick.Tick
 	lastTickSaved time.Time    
@@ -112,6 +120,7 @@ func New(
 	pnls *pnl.Repository,
 	events *event.Repository,
 	processorMgr *marketstate.ProcessorManager,
+	dispatcher notify.Dispatcher,
 ) *Bot {
 	return &Bot{
 		cfg:            cfg,
@@ -139,6 +148,7 @@ func New(
 		events:         events,
 		processorMgr:   processorMgr,
 		marketStates:   make(map[string]map[string]indicator.MarketState),
+		dispatcher:     dispatcher,
 	}
 }
 
@@ -150,6 +160,7 @@ func (b *Bot) Run(ctx context.Context, startedAt time.Time) {
 	if b.provider.Name() == "ctrader" {
 		b.weekendCloserOnce.Do(func() { go b.weekendPositionCloser(ctx) })
 	}
+	b.dailySummaryOnce.Do(func() { go b.dailySummarySender(ctx) })
 
 	priceCh := b.provider.PriceChan()
 	candleCh := b.provider.CandleChan()
@@ -640,6 +651,14 @@ func (b *Bot) onExecution(ctx context.Context, exec provider.ExecutionEvent) {
 }
 
 func (b *Bot) onTradeSignal(ctx context.Context, result EntryResult, price provider.PriceEvent, signalID string) {
+	b.pausedMu.Lock()
+	paused := b.paused
+	b.pausedMu.Unlock()
+	if paused {
+		slog.Info("signal skipped — bot paused")
+		return
+	}
+
 	if b.pendingOrder {
 		slog.Info("signal skipped — pending order active")
 		return
@@ -866,7 +885,23 @@ func (b *Bot) recordOpenFill(ctx context.Context, exec provider.ExecutionEvent) 
 		"posID", provPosID, "side", b.pendingSide,
 		"price", deal.ExecutionPrice, "tier", b.pendingTier,
 	)
-	
+
+	if b.dispatcher != nil {
+		ep := deal.ExecutionPrice
+		slPips := math.Abs(ep-b.pendingSLPrice) / b.pipSize
+		tpPips := math.Abs(b.pendingTPPrice-ep) / b.pipSize
+		go b.dispatcher.Dispatch(ctx, notify.EventTradeOpened, notify.TradeOpenedPayload{
+			Symbol:     b.symbol,
+			Side:       b.pendingSide,
+			Price:      ep,
+			SLPrice:    b.pendingSLPrice,
+			TPPrice:    b.pendingTPPrice,
+			SLPips:     slPips,
+			TPPips:     tpPips,
+			Confluence: 0,
+		})
+	}
+
 	b.events.Insert(ctx, "position_opened", map[string]any{
 		"deal_id":     deal.DealID,
 		"position_id": provPosID,
@@ -976,6 +1011,23 @@ func (b *Bot) recordCloseFill(ctx context.Context, exec provider.ExecutionEvent)
 		"grossProfit", cl.GrossProfit,
 		"realized", realized,
 	)
+
+	if b.dispatcher != nil {
+		var dur time.Duration
+		if durationMs != nil {
+			dur = time.Duration(*durationMs) * time.Millisecond
+		}
+		go b.dispatcher.Dispatch(ctx, notify.EventTradeClosed, notify.TradeClosedPayload{
+			Symbol:     b.symbol,
+			Side:       tracked.Side,
+			EntryPrice: cl.EntryPrice,
+			ClosePrice: deal.ExecutionPrice,
+			Realized:   realized,
+			IsWin:      isWin,
+			Duration:   dur,
+		})
+	}
+
 	b.events.Insert(ctx, "position_closed", map[string]any{
 		"deal_id":      deal.DealID,
 		"gross_profit": cl.GrossProfit,
@@ -1305,4 +1357,97 @@ func inferCloseReason(grossProfit float64) string {
 		return "tp_hit"
 	}
 	return "sl_hit"
+}
+
+func (b *Bot) Pause() {
+	b.pausedMu.Lock()
+	b.paused = true
+	b.pausedMu.Unlock()
+}
+
+func (b *Bot) Resume() {
+	b.pausedMu.Lock()
+	b.paused = false
+	b.pausedMu.Unlock()
+}
+
+func (b *Bot) IsPaused() bool {
+	b.pausedMu.Lock()
+	defer b.pausedMu.Unlock()
+	return b.paused
+}
+
+func (b *Bot) Symbol() string { return b.symbol }
+
+func (b *Bot) StatusText(ctx context.Context) string {
+	mode := "Running"
+	if b.IsPaused() {
+		mode = "Paused"
+	}
+	positions := b.registry.All()
+	pnlData, _ := b.pnls.TodayFull(ctx, b.symbolUUID)
+	pnlLine := "Today: no trades"
+	if pnlData != nil && pnlData.TradeCount > 0 {
+		sign := "+"
+		if pnlData.RealizedPnL < 0 {
+			sign = ""
+		}
+		pnlLine = fmt.Sprintf("Today: %d trades (%dW/%dL) %s$%.2f",
+			pnlData.TradeCount, pnlData.WinCount, pnlData.LossCount,
+			sign, pnlData.RealizedPnL)
+	}
+	return fmt.Sprintf(
+		"<b>%s</b>\nMode: %s\nOpen positions: %d\n%s\nBalance: $%.2f",
+		b.symbol, mode, len(positions), pnlLine, b.getBalance(),
+	)
+}
+
+func (b *Bot) TodayText(ctx context.Context) string {
+	pnlData, _ := b.pnls.TodayFull(ctx, b.symbolUUID)
+	if pnlData == nil || pnlData.TradeCount == 0 {
+		return fmt.Sprintf("<b>%s</b>\nNo trades today.", b.symbol)
+	}
+	sign := "+"
+	if pnlData.RealizedPnL < 0 {
+		sign = ""
+	}
+	return fmt.Sprintf(
+		"<b>%s — today</b>\nTrades: %d (%dW / %dL)\nP&amp;L: %s$%.2f\nBalance: $%.2f",
+		b.symbol,
+		pnlData.TradeCount, pnlData.WinCount, pnlData.LossCount,
+		sign, pnlData.RealizedPnL,
+		b.getBalance(),
+	)
+}
+
+// dailySummarySender fires once per day at 22:00 UTC (after NY close).
+func (b *Bot) dailySummarySender(ctx context.Context) {
+	if b.dispatcher == nil {
+		return
+	}
+	for {
+		now := time.Now().UTC()
+		next := time.Date(now.Year(), now.Month(), now.Day(), 22, 0, 0, 0, time.UTC)
+		if !next.After(now) {
+			next = next.Add(24 * time.Hour)
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(time.Until(next)):
+		}
+
+		pnlData, err := b.pnls.TodayFull(ctx, b.symbolUUID)
+		if err != nil || pnlData == nil {
+			continue
+		}
+		b.dispatcher.Dispatch(ctx, notify.EventDailySummary, notify.DailySummaryPayload{
+			Symbol:     b.symbol,
+			TradeCount: pnlData.TradeCount,
+			WinCount:   pnlData.WinCount,
+			LossCount:  pnlData.LossCount,
+			Realized:   pnlData.RealizedPnL,
+			Balance:    b.getBalance(),
+		})
+	}
 }
