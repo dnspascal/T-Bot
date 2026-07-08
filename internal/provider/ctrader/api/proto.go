@@ -92,7 +92,7 @@ func encodeClosePositionReq(accountID, positionID, volume int64) []byte {
 	return b
 }
 
-func encodeNewOrderReq(accountID, symbolID int64, side uint32, volume int64, slPrice, tpPrice float64) []byte {
+func encodeNewOrderReq(accountID, symbolID int64, side uint32, volume int64, slDist, tpDist, priceDivisor float64, absoluteSLTP bool, priceDecimals int, lastBid, lastAsk float64) []byte {
 	var b []byte
 	b = appendUint32(b, 1, ProtoOANewOrderReq)
 	b = appendInt64(b, 2, accountID)
@@ -101,11 +101,36 @@ func encodeNewOrderReq(accountID, symbolID int64, side uint32, volume int64, slP
 	b = appendUint32(b, 5, side)
 	b = appendInt64(b, 6, volume)
 
-	if slPrice > 0 {
-		b = appendDouble(b, 11, slPrice)
-	}
-	if tpPrice > 0 {
-		b = appendDouble(b, 12, tpPrice)
+	if absoluteSLTP {
+		// Broker rejects relative SL/TP for this symbol — use absolute prices.
+		// Compute current mid from last known bid/ask, fall back to bid if ask unknown.
+		mid := lastBid
+		if lastBid > 0 && lastAsk > 0 {
+			mid = (lastBid + lastAsk) / 2
+		}
+		scale := math.Pow(10, float64(priceDecimals))
+		var slPrice, tpPrice float64
+		if side == 1 { // BUY: SL below, TP above
+			slPrice = math.Round((mid-slDist)*scale) / scale
+			tpPrice = math.Round((mid+tpDist)*scale) / scale
+		} else { // SELL: SL above, TP below
+			slPrice = math.Round((mid+slDist)*scale) / scale
+			tpPrice = math.Round((mid-tpDist)*scale) / scale
+		}
+		if slDist > 0 {
+			b = appendDouble(b, 11, slPrice)
+		}
+		if tpDist > 0 {
+			b = appendDouble(b, 12, tpPrice)
+		}
+	} else {
+		// Relative SL/TP in ticks from entry — works for forex.
+		if slDist > 0 {
+			b = appendInt64(b, 19, int64(math.Round(slDist*priceDivisor)))
+		}
+		if tpDist > 0 {
+			b = appendInt64(b, 20, int64(math.Round(tpDist*priceDivisor)))
+		}
 	}
 	return b
 }

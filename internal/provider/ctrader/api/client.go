@@ -36,9 +36,13 @@ type Client struct {
 	accountID    int64
 	symbolID     int64
 	priceDivisor float64
+	absoluteSLTP bool    // true for commodities — broker rejects relative SL/TP
+	priceDecimals int    // decimal places allowed in order prices (2 for gold, 5 for EURUSD)
 
 	mu          sync.Mutex
 	authed      bool
+	lastBid     float64 // last known bid; only updated when bid > 0 in spot event
+	lastAsk     float64 // last known ask; only updated when ask > 0 in spot event
 	spotLogOnce atomic.Bool
 	PriceCh     chan PriceEvent
 	ExecutionCh chan ExecutionEvent
@@ -53,11 +57,20 @@ type Client struct {
 	accountAuthedCh chan struct{}
 }
 
-func NewClient(demo bool, accountID, symbolID int64, priceDivisor float64) *Client {
+func NewClient(demo bool, accountID, symbolID int64, priceDivisor float64, pipSize float64) *Client {
+	// priceDecimals = number of decimal places the broker allows in order prices.
+	// Formula: pip has N decimal places, broker allows N+1 (fractional pip).
+	// e.g. EURUSD pipSize=0.0001 → 4+1=5 dp; XAUUSD pipSize=0.10 → 1+1=2 dp.
+	priceDecimals := 0
+	for v := pipSize / 10; v < 1; v *= 10 {
+		priceDecimals++
+	}
 	c := &Client{
-		accountID:    accountID,
-		symbolID:     symbolID,
-		priceDivisor: priceDivisor,
+		accountID:     accountID,
+		symbolID:      symbolID,
+		priceDivisor:  priceDivisor,
+		absoluteSLTP:  pipSize >= 0.01, // commodities use absolute; forex uses relative ticks
+		priceDecimals: priceDecimals,
 		PriceCh:        make(chan PriceEvent, 100),
 		ExecutionCh:    make(chan ExecutionEvent, 10),
 		TrendbarCh:     make(chan Trendbar, 10),
@@ -229,9 +242,10 @@ func (c *Client) ClosePosition(positionID, volume int64) error {
 		encodeClosePositionReq(accountID, positionID, volume))
 }
 
-func (c *Client) PlaceMarketOrder(side uint32, volume int64, slPrice, tpPrice float64) error {
+func (c *Client) PlaceMarketOrder(side uint32, volume int64, slDist, tpDist float64) error {
 	c.mu.Lock()
 	authed := c.authed
+	lastBid, lastAsk := c.lastBid, c.lastAsk
 	c.mu.Unlock()
 
 	if !authed {
@@ -241,11 +255,12 @@ func (c *Client) PlaceMarketOrder(side uint32, volume int64, slPrice, tpPrice fl
 	slog.Info("placing order",
 		"side", sideStr(side),
 		"volume", volume,
-		"slPrice", slPrice,
-		"tpPrice", tpPrice,
+		"slDist", slDist,
+		"tpDist", tpDist,
 	)
 	return c.conn.SendRaw(ProtoOANewOrderReq,
-		encodeNewOrderReq(c.accountID, c.symbolID, side, volume, slPrice, tpPrice))
+		encodeNewOrderReq(c.accountID, c.symbolID, side, volume, slDist, tpDist,
+			c.priceDivisor, c.absoluteSLTP, c.priceDecimals, lastBid, lastAsk))
 }
 
 func (c *Client) handleMessage(payloadType uint32, payload []byte) {
@@ -275,10 +290,23 @@ func (c *Client) handleMessage(payloadType uint32, payload []byte) {
 		if ok {
 			bidF := float64(bid) / c.priceDivisor
 			askF := float64(ask) / c.priceDivisor
+			c.mu.Lock()
+			if bidF > 0 {
+				c.lastBid = bidF
+			}
+			if askF > 0 {
+				c.lastAsk = askF
+			}
+			lastBid, lastAsk := c.lastBid, c.lastAsk
+			c.mu.Unlock()
+			mid := lastBid
+			if lastBid > 0 && lastAsk > 0 {
+				mid = (lastBid + lastAsk) / 2
+			}
 			event := PriceEvent{
-				Bid:       bidF,
-				Ask:       askF,
-				Mid:       (bidF + askF) / 2,
+				Bid:       lastBid,
+				Ask:       lastAsk,
+				Mid:       mid,
 				Timestamp: time.Now().UTC(),
 			}
 			select {
