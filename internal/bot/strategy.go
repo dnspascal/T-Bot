@@ -176,14 +176,6 @@ func evaluateEntry(states map[string]indicator.MarketState, currentPrice float64
 				if direction == "" {
 					return hold("ranging: price not near confirmed S/R or RSI not confirming")
 				}
-				if h1, h1ok := states["H1"]; h1ok && h1.IsWarmedUp {
-					if h1.Regime == "trending_down" && direction == "BUY" {
-						return hold("ranging: bounce BUY blocked by H1 downtrend")
-					}
-					if h1.Regime == "trending_up" && direction == "SELL" {
-						return hold("ranging: bounce SELL blocked by H1 uptrend")
-					}
-				}
 				isRanging = true
 			}
 

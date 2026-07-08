@@ -7,6 +7,13 @@ import (
 	"time"
 )
 
+func appendDouble(b []byte, field int, v float64) []byte {
+	b = appendTag(b, field, 1)
+	var buf [8]byte
+	binary.LittleEndian.PutUint64(buf[:], math.Float64bits(v))
+	return append(b, buf[:]...)
+}
+
 func appendVarint(b []byte, v uint64) []byte {
 	for v >= 0x80 {
 		b = append(b, byte(v)|0x80)
@@ -85,7 +92,7 @@ func encodeClosePositionReq(accountID, positionID, volume int64) []byte {
 	return b
 }
 
-func encodeNewOrderReq(accountID, symbolID int64, side uint32, volume int64, slDist, tpDist, priceDivisor float64) []byte {
+func encodeNewOrderReq(accountID, symbolID int64, side uint32, volume int64, slPrice, tpPrice float64) []byte {
 	var b []byte
 	b = appendUint32(b, 1, ProtoOANewOrderReq)
 	b = appendInt64(b, 2, accountID)
@@ -94,11 +101,11 @@ func encodeNewOrderReq(accountID, symbolID int64, side uint32, volume int64, slD
 	b = appendUint32(b, 5, side)
 	b = appendInt64(b, 6, volume)
 
-	if slDist > 0 {
-		b = appendInt64(b, 19, int64(math.Round(slDist*priceDivisor)))
+	if slPrice > 0 {
+		b = appendDouble(b, 11, slPrice)
 	}
-	if tpDist > 0 {
-		b = appendInt64(b, 20, int64(math.Round(tpDist*priceDivisor)))
+	if tpPrice > 0 {
+		b = appendDouble(b, 12, tpPrice)
 	}
 	return b
 }

@@ -229,7 +229,7 @@ func (c *Client) ClosePosition(positionID, volume int64) error {
 		encodeClosePositionReq(accountID, positionID, volume))
 }
 
-func (c *Client) PlaceMarketOrder(side uint32, volume int64, slDist, tpDist float64) error {
+func (c *Client) PlaceMarketOrder(side uint32, volume int64, slPrice, tpPrice float64) error {
 	c.mu.Lock()
 	authed := c.authed
 	c.mu.Unlock()
@@ -241,11 +241,11 @@ func (c *Client) PlaceMarketOrder(side uint32, volume int64, slDist, tpDist floa
 	slog.Info("placing order",
 		"side", sideStr(side),
 		"volume", volume,
-		"slDist", slDist,
-		"tpDist", tpDist,
+		"slPrice", slPrice,
+		"tpPrice", tpPrice,
 	)
 	return c.conn.SendRaw(ProtoOANewOrderReq,
-		encodeNewOrderReq(c.accountID, c.symbolID, side, volume, slDist, tpDist, c.priceDivisor))
+		encodeNewOrderReq(c.accountID, c.symbolID, side, volume, slPrice, tpPrice))
 }
 
 func (c *Client) handleMessage(payloadType uint32, payload []byte) {

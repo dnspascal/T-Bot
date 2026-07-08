@@ -267,11 +267,11 @@ func (c *CTrader) PlaceMarketOrder(
 	ctx context.Context,
 	side string,
 	volume int64,
-	slDist float64,
-	tpDist float64,
+	slPrice float64,
+	tpPrice float64,
 ) (orderID string, err error) {
 	sideUint32 := stringToSide(side)
-	err = c.client.PlaceMarketOrder(sideUint32, volume, slDist, tpDist)
+	err = c.client.PlaceMarketOrder(sideUint32, volume, slPrice, tpPrice)
 
 	return "", err
 }
@@ -280,8 +280,8 @@ func (c *CTrader) PlaceMarketOrderWithTimeout(
 	ctx context.Context,
 	side string,
 	volume int64,
-	slDist float64,
-	tpDist float64,
+	slPrice float64,
+	tpPrice float64,
 	timeout time.Duration,
 ) (orderID string, err error) {
 	ctx, cancel := context.WithTimeout(ctx, timeout)
@@ -289,7 +289,7 @@ func (c *CTrader) PlaceMarketOrderWithTimeout(
 
 	done := make(chan error, 1)
 	go func() {
-		_, err := c.PlaceMarketOrder(ctx, side, volume, slDist, tpDist)
+		_, err := c.PlaceMarketOrder(ctx, side, volume, slPrice, tpPrice)
 		done <- err
 	}()
 
