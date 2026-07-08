@@ -333,7 +333,7 @@ func (c *CTrader) QueryOpenPositions(ctx context.Context, symbol string) ([]prov
 
 	var result []provider.Position
 	for _, pos := range positions {
-		if symbol != "" && pos.SymbolID != c.ctCfg.SymbolID {
+		if pos.SymbolID != c.ctCfg.SymbolID {
 			continue
 		}
 		posID := fmt.Sprintf("%d", pos.PositionID)
