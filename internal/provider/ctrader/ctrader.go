@@ -72,6 +72,7 @@ func (c *CTrader) pipeExecEvents() {
 				DealID:         deal.DealID,
 				OrderID:        deal.OrderID,
 				PositionID:     deal.PositionID,
+				SymbolID:       deal.SymbolID,
 				FilledVolume:   deal.FilledVolume,
 				Volume:         deal.Volume,
 				ExecutionPrice: deal.ExecutionPrice,

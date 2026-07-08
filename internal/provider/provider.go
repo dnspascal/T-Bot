@@ -97,6 +97,7 @@ type DealInfo struct {
 	DealID             int64
 	OrderID            int64
 	PositionID         int64
+	SymbolID           int64
 	FilledVolume       int64
 	Volume             int64
 	ExecutionPrice     float64

@@ -596,6 +596,10 @@ func (b *Bot) logUnrealizedPnL(currentPrice float64) {
 }
 
 func (b *Bot) onExecution(ctx context.Context, exec provider.ExecutionEvent) {
+	// Ignore fills that belong to a different symbol on the same cTrader account.
+	if exec.HasDeal && exec.Deal.SymbolID != 0 && b.cfg.CTrader != nil && exec.Deal.SymbolID != b.cfg.CTrader.SymbolID {
+		return
+	}
 	if !exec.HasDeal {
 		if exec.Type == "ORDER_FILLED" && exec.ClosedPositionID != "" {
 			b.recordBrokerClose(ctx, exec)

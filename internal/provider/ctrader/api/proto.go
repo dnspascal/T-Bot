@@ -535,16 +535,17 @@ type DealInfo struct {
 	DealID         int64
 	OrderID        int64
 	PositionID     int64
+	SymbolID       int64
 	Volume         int64
 	FilledVolume   int64
 	ExecutionPrice float64
-	TradeSide      uint32 
+	TradeSide      uint32
 	DealStatus     uint32
 	Commission     float64
 	CreateTime     time.Time
 	ExecTime       time.Time
-	IsClose        bool        
-	Close          CloseDetail 
+	IsClose        bool
+	Close          CloseDetail
 }
 
 
@@ -684,6 +685,10 @@ func decodeDeal(data []byte) DealInfo {
 			v, n2 := decodeVarint(data[i:])
 			i += n2
 			d.FilledVolume = int64(v)
+		case field == 6 && wire == 0: // symbolId
+			v, n2 := decodeVarint(data[i:])
+			i += n2
+			d.SymbolID = int64(v)
 		case field == 7 && wire == 0:
 			v, n2 := decodeVarint(data[i:])
 			i += n2
