@@ -81,8 +81,9 @@ type Bot struct {
 	weekendCloserOnce  sync.Once
 	dailySummaryOnce   sync.Once
 
-	tickCh      chan tick.Tick
-	lastTickSaved time.Time    
+	tickCh           chan tick.Tick
+	lastTickSaved    time.Time
+	lastDrawbackCheck time.Time
 
 	db        *pgxpool.Pool
 	lookup    *symbol.SymbolLookup
@@ -1148,8 +1149,21 @@ func (b *Bot) storeCandle(ctx context.Context, c provider.Candle) {
 	}
 }
 
-func (b *Bot) onTick(_ context.Context, price provider.PriceEvent) {
+func (b *Bot) onTick(ctx context.Context, price provider.PriceEvent) {
 	b.currentPrice = price
+
+	// Run peak drawback check on live price, not just M1 close.
+	// Gold can move 10+ points in a single minute, bypassing the threshold
+	// entirely if we only check at candle close.
+	if b.registry.Count() > 0 && time.Since(b.lastDrawbackCheck) >= 5*time.Second {
+		b.lastDrawbackCheck = time.Now()
+		mid := price.Mid
+		if price.Bid > 0 && price.Ask > 0 {
+			mid = (price.Bid + price.Ask) / 2
+		}
+		b.checkPeakDrawback(ctx, mid)
+	}
+
 	if time.Since(b.lastTickSaved) < time.Second {
 		return
 	}
