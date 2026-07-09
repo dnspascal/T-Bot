@@ -460,6 +460,15 @@ func (c *CTrader) FetchLatestTick(ctx context.Context, symbol string) (*provider
 func (c *CTrader) RefreshCredentials(ctx context.Context) error {
 	newAccessToken, newRefreshToken, err := api.RefreshToken(c.ctCfg.ClientID, c.ctCfg.ClientSecret, c.ctCfg.RefreshToken)
 	if err != nil {
+		// The other bot instance may have already refreshed and saved a newer token to the DB.
+		// Try that before falling back to the OAuth browser flow.
+		if dbToken, dbErr := bot.LoadCredential(ctx, c.db, "ctrader_refresh_token"); dbErr == nil && dbToken != "" && dbToken != c.ctCfg.RefreshToken {
+			slog.Info("token refresh failed — retrying with newer token from DB", "err", err)
+			c.ctCfg.RefreshToken = dbToken
+			newAccessToken, newRefreshToken, err = api.RefreshToken(c.ctCfg.ClientID, c.ctCfg.ClientSecret, dbToken)
+		}
+	}
+	if err != nil {
 		slog.Warn("token refresh failed — initiating OAuth flow", "err", err)
 		newAccessToken, newRefreshToken, err = api.InitiateOAuthFlow(
 			c.ctCfg.ClientID, c.ctCfg.ClientSecret,

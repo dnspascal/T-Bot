@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"maps"
 	"math"
+	"os"
 	"sync"
 	"time"
 
@@ -1222,8 +1223,8 @@ func (b *Bot) tokenRefresher(ctx context.Context) {
 			return
 		case <-ticker.C:
 			if err := b.provider.RefreshCredentials(ctx); err != nil {
-				slog.Error("credentials refresh failed", "err", err, "provider", b.provider.Name())
-				continue
+				slog.Error("credentials refresh failed — exiting for systemd restart", "err", err, "provider", b.provider.Name())
+				os.Exit(1)
 			}
 			slog.Info("credentials refreshed", "provider", b.provider.Name())
 		}
