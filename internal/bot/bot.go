@@ -23,6 +23,7 @@ import (
 	"github.com/denismgaya/t-bot/internal/provider"
 	"github.com/denismgaya/t-bot/internal/risk"
 	"github.com/denismgaya/t-bot/internal/signal"
+	strat "github.com/denismgaya/t-bot/internal/strategy"
 	"github.com/denismgaya/t-bot/internal/symbol"
 	"github.com/denismgaya/t-bot/internal/tick"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -43,6 +44,7 @@ type Bot struct {
 	riskMgr      *risk.Manager
 	currentPrice provider.PriceEvent
 	registry     *PositionRegistry
+	strat        strat.Strategy
 
 	symbol         string
 	symbolUUID     string
@@ -103,6 +105,7 @@ type Bot struct {
 func New(
 	cfg *config.Config,
 	prov provider.Provider,
+	s strat.Strategy,
 	sym string,
 	symbolUUID string,
 	providerAcctID string,
@@ -127,6 +130,7 @@ func New(
 	return &Bot{
 		cfg:            cfg,
 		provider:       prov,
+		strat:          s,
 		symbol:         sym,
 		symbolUUID:     symbolUUID,
 		providerAcctID: providerAcctID,
@@ -470,14 +474,19 @@ func (b *Bot) processClosedCandle(ctx context.Context, _ float64) {
 	b.watchPositions(ctx, m5)
 
 	evalStart := time.Now()
-	result := evaluateEntry(states, mid, b.pipSize)
+	var result strat.EntryResult
+	if isEODWindow() {
+		result = strat.EntryResult{Signal: "HOLD", Reason: "EOD window — no new entries before dead session"}
+	} else {
+		result = b.strat.Evaluate(states, mid, b.pipSize)
+	}
 
 	if b.forceTestOrder && result.Signal == "HOLD" {
 		slog.Warn("FORCE_TEST_ORDER: overriding HOLD with BUY for pipeline test")
-		result = EntryResult{
+		result = strat.EntryResult{
 			Signal:     "BUY",
 			Confluence: 1,
-			Tier:       TierNormal,
+			Tier:       strat.TierNormal,
 			SLPrice:    mid - m5.ATR*slATRMult,
 			TPPrice:    mid + m5.ATR*tpATRMult,
 			SLPips:     m5.ATR * slATRMult / b.pipSize,
@@ -498,6 +507,7 @@ func (b *Bot) processClosedCandle(ctx context.Context, _ float64) {
 		ProcessingUS:        time.Since(evalStart).Microseconds(),
 		CheckedMarketStates: buildMarketStateSnapshots(states),
 		BarTime:             &barTime,
+		Strategy:            b.strat.Name(),
 	})
 	if err != nil {
 		slog.Error("insert signal failed", "err", err)
@@ -656,7 +666,7 @@ func (b *Bot) onExecution(ctx context.Context, exec provider.ExecutionEvent) {
 	}
 }
 
-func (b *Bot) onTradeSignal(ctx context.Context, result EntryResult, price provider.PriceEvent, signalID string) {
+func (b *Bot) onTradeSignal(ctx context.Context, result strat.EntryResult, price provider.PriceEvent, signalID string) {
 	b.pausedMu.Lock()
 	paused := b.paused
 	b.pausedMu.Unlock()
@@ -1348,7 +1358,7 @@ func (b *Bot) sendTestPosition(ctx context.Context) {
 	b.pendingOrderID = orderID
 	b.pendingOrderSentAt = sentAt
 	b.pendingSide = "BUY"
-	b.pendingTier = TierNormal
+	b.pendingTier = strat.TierNormal
 	b.pendingSLPrice = 0
 	b.pendingTPPrice = 0
 	b.pendingATR = 0
@@ -1361,7 +1371,7 @@ func (b *Bot) sendTestPosition(ctx context.Context) {
 		b.registry.Register(trackedPosition{
 			ProviderPositionID: orderID,
 			Side:               "BUY",
-			Tier:               TierNormal,
+			Tier:               strat.TierNormal,
 			Volume:             testVolume,
 			OpenPrice:          mid,
 			OpenTime:           sentAt,

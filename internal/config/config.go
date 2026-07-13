@@ -50,6 +50,8 @@ type Config struct {
 	TelegramToken   string
 	WebhookSecret   string
 	WebhookPort     int
+
+	Strategy string
 }
 
 func Load() (*Config, error) {
@@ -138,6 +140,8 @@ func Load() (*Config, error) {
 		TelegramToken: getEnv("TELEGRAM_BOT_TOKEN", ""),
 		WebhookSecret: getEnv("WEBHOOK_SECRET", ""),
 		WebhookPort:   webhookPort,
+
+		Strategy: getEnv("STRATEGY", "regime"),
 	}
 
 	return cfg, nil

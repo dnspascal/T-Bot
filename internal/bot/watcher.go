@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/denismgaya/t-bot/internal/indicator"
+	"github.com/denismgaya/t-bot/internal/strategy"
 )
 
 const peakDrawbackThreshold = 60.0
@@ -69,7 +70,7 @@ func (b *Bot) watchPositions(ctx context.Context, ms indicator.MarketState) {
 			)
 			b.closeTrackedPosition(ctx, pos, reason)
 
-		case n >= signalsToReduce && pos.Tier >= TierStronger:
+		case n >= signalsToReduce && pos.Tier >= strategy.TierStronger:
 			slog.Info("2 signals — reducing high-tier position",
 				"posID", pos.ProviderPositionID, "tier", pos.Tier,
 			)

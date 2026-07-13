@@ -1,0 +1,1 @@
+ALTER TABLE signals ADD COLUMN strategy TEXT NOT NULL DEFAULT 'regime';

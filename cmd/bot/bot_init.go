@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"log/slog"
 
@@ -11,6 +12,9 @@ import (
 	"github.com/denismgaya/t-bot/internal/notify"
 	"github.com/denismgaya/t-bot/internal/provider"
 	"github.com/denismgaya/t-bot/internal/risk"
+	"github.com/denismgaya/t-bot/internal/strategy"
+	"github.com/denismgaya/t-bot/internal/strategy/regime"
+	srbounce "github.com/denismgaya/t-bot/internal/strategy/sr_bounce"
 )
 
 type BotInitResult struct {
@@ -64,12 +68,29 @@ func initializeBot(ctx context.Context, cfg *config.Config, svc *Services, prov 
 		lotUnit = 100 // gold micro lot in cTrader API units
 	}
 
-	tradingBot := bot.New(cfg, prov, symbol, symbolUUID, authResult.AccountID, pipSize, lotUnit, svc.DB.Pool, riskMgr, balance, authResult.Leverage, svc.Lookup, svc.Repos.Ticks, svc.Repos.Candles, svc.Repos.Signals, svc.Repos.Orders, svc.Repos.Fills, svc.Repos.Positions, svc.Repos.PnLs, svc.Repos.Events, processorMgr, dispatcher)
+	strat, err := buildStrategy(cfg.Strategy)
+	if err != nil {
+		log.Fatal("build strategy:", err)
+	}
+	slog.Info("strategy loaded", "name", strat.Name(), "provider", prov.Name())
+
+	tradingBot := bot.New(cfg, prov, strat, symbol, symbolUUID, authResult.AccountID, pipSize, lotUnit, svc.DB.Pool, riskMgr, balance, authResult.Leverage, svc.Lookup, svc.Repos.Ticks, svc.Repos.Candles, svc.Repos.Signals, svc.Repos.Orders, svc.Repos.Fills, svc.Repos.Positions, svc.Repos.PnLs, svc.Repos.Events, processorMgr, dispatcher)
 
 	return &BotInitResult{
 		Bot:          tradingBot,
 		RiskManager:  riskMgr,
 		ProcessorMgr: processorMgr,
 		Balance:      balance,
+	}
+}
+
+func buildStrategy(name string) (strategy.Strategy, error) {
+	switch name {
+	case "", "regime":
+		return regime.New(), nil
+	case "sr_bounce":
+		return srbounce.New(), nil
+	default:
+		return nil, fmt.Errorf("unknown strategy %q — valid options: regime, sr_bounce", name)
 	}
 }
