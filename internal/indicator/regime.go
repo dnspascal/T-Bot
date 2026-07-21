@@ -1,5 +1,12 @@
 package indicator
 
+const (
+    TrendingUp   = "trending_up"
+    TrendingDown = "trending_down"
+    Ranging      = "ranging"
+    Breakout     = "breakout"
+)
+
 func CalculateRegime(emaFast, emaSlow, adx, high, low float64, ohlc []OHLC) string {
 	if len(ohlc) > 20 {
 		prior := ohlc[:len(ohlc)-1]
