@@ -95,7 +95,7 @@ func buildStrategy(name string) (strategy.Strategy, error) {
 	case "trend_follow":
 		return trendfollow.New(), nil
 	case "combined":
-		return combined.New(regime.New(), srbounce.New()), nil
+		return combined.New(trendfollow.New(), srbounce.New()), nil
 	default:
 		return nil, fmt.Errorf("unknown strategy %q — valid options: regime, sr_bounce", name)
 	}
