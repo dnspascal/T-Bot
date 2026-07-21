@@ -19,6 +19,7 @@ func (c *CombinedStrategy) Evaluate(states map[string]indicator.MarketState, cur
 	for _, s := range c.strategies {
 		result := s.Evaluate(states, currentPrice, pipSize)
 		if result.Signal != strategy.SignalHold {
+			result.StrategyName = s.Name()
 			return result
 		}
 	}

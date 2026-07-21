@@ -78,7 +78,7 @@ type Bot struct {
 	paused   bool
 
 	refresherOnce     sync.Once
-	watchDogOnce       sync.Once
+	watchDogOnce      sync.Once
 	tickWriterOnce    sync.Once
 	weekendCloserOnce sync.Once
 	dailySummaryOnce  sync.Once
@@ -506,7 +506,12 @@ func (b *Bot) processClosedCandle(ctx context.Context, _ float64) {
 		ProcessingUS:        time.Since(evalStart).Microseconds(),
 		CheckedMarketStates: buildMarketStateSnapshots(states),
 		BarTime:             &barTime,
-		Strategy:            b.strat.Name(),
+		Strategy: func() string {
+			if result.StrategyName != "" {
+				return result.StrategyName
+			}
+			return b.strat.Name()
+		}(),
 	})
 	if err != nil {
 		slog.Error("insert signal failed", "err", err)
