@@ -19,6 +19,12 @@ const (
 	TierVeryStrong = 3
 )
 
+const (
+	SignalBuy  = "BUY"
+	SignalSell = "SELL"
+	SignalHold = "HOLD"
+)
+
 // EntryResult is returned by every strategy's Evaluate call.
 type EntryResult struct {
 	Signal     string

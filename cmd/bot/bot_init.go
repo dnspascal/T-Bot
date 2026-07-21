@@ -13,8 +13,10 @@ import (
 	"github.com/denismgaya/t-bot/internal/provider"
 	"github.com/denismgaya/t-bot/internal/risk"
 	"github.com/denismgaya/t-bot/internal/strategy"
+	combined "github.com/denismgaya/t-bot/internal/strategy/combined"
 	"github.com/denismgaya/t-bot/internal/strategy/regime"
 	srbounce "github.com/denismgaya/t-bot/internal/strategy/sr_bounce"
+	 "github.com/denismgaya/t-bot/internal/strategy/trend_follow"
 )
 
 type BotInitResult struct {
@@ -90,6 +92,10 @@ func buildStrategy(name string) (strategy.Strategy, error) {
 		return regime.New(), nil
 	case "sr_bounce":
 		return srbounce.New(), nil
+	case "trend_follow":
+		return trendfollow.New(), nil
+	case "combined":
+		return combined.New(regime.New(), srbounce.New()), nil
 	default:
 		return nil, fmt.Errorf("unknown strategy %q — valid options: regime, sr_bounce", name)
 	}
