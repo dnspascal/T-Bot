@@ -29,7 +29,6 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-
 const pendingOrderTimeout = 30 * time.Second
 const pendingCloseTimeout = 30 * time.Second
 
@@ -69,7 +68,7 @@ type Bot struct {
 	lastCandleOpenTime int64
 	lastCandleClose    float64
 
-	forceTestOrder bool 
+	forceTestOrder bool
 
 	pendingCloseReasons map[string]pendingClose
 
@@ -78,13 +77,14 @@ type Bot struct {
 	pausedMu sync.Mutex
 	paused   bool
 
-	refresherOnce      sync.Once
-	tickWriterOnce     sync.Once
-	weekendCloserOnce  sync.Once
-	dailySummaryOnce   sync.Once
+	refresherOnce     sync.Once
+	watchDogOnce       sync.Once
+	tickWriterOnce    sync.Once
+	weekendCloserOnce sync.Once
+	dailySummaryOnce  sync.Once
 
-	tickCh           chan tick.Tick
-	lastTickSaved    time.Time
+	tickCh            chan tick.Tick
+	lastTickSaved     time.Time
 	lastDrawbackCheck time.Time
 
 	db        *pgxpool.Pool
@@ -128,33 +128,33 @@ func New(
 	dispatcher notify.Dispatcher,
 ) *Bot {
 	return &Bot{
-		cfg:            cfg,
-		provider:       prov,
-		strat:          s,
-		symbol:         sym,
-		symbolUUID:     symbolUUID,
-		providerAcctID: providerAcctID,
-		pipSize:        pipSize,
-		lotUnit:        lotUnit,
-		db:             db,
-		riskMgr:        riskMgr,
-		balance:        balance,
-		leverage:       leverage,
+		cfg:                 cfg,
+		provider:            prov,
+		strat:               s,
+		symbol:              sym,
+		symbolUUID:          symbolUUID,
+		providerAcctID:      providerAcctID,
+		pipSize:             pipSize,
+		lotUnit:             lotUnit,
+		db:                  db,
+		riskMgr:             riskMgr,
+		balance:             balance,
+		leverage:            leverage,
 		registry:            newPositionRegistry(),
 		pendingCloseReasons: make(map[string]pendingClose),
 		tickCh:              make(chan tick.Tick, 500),
-		lookup:         lookup,
-		ticks:          ticks,
-		candles:        candles,
-		signals:        signals,
-		orders:         orders,
-		fills:          fills,
-		positions:      positions,
-		pnls:           pnls,
-		events:         events,
-		processorMgr:   processorMgr,
-		marketStates:   make(map[string]map[string]indicator.MarketState),
-		dispatcher:     dispatcher,
+		lookup:              lookup,
+		ticks:               ticks,
+		candles:             candles,
+		signals:             signals,
+		orders:              orders,
+		fills:               fills,
+		positions:           positions,
+		pnls:                pnls,
+		events:              events,
+		processorMgr:        processorMgr,
+		marketStates:        make(map[string]map[string]indicator.MarketState),
+		dispatcher:          dispatcher,
 	}
 }
 
@@ -162,6 +162,7 @@ func (b *Bot) Run(ctx context.Context, startedAt time.Time) {
 	b.reconcileOpenPositions(ctx)
 
 	b.refresherOnce.Do(func() { go b.tokenRefresher(ctx) })
+	b.watchDogOnce.Do(func() { go b.botWatchDog(ctx) })
 	b.tickWriterOnce.Do(func() { go b.tickWriter(ctx) })
 	if b.provider.Name() == "ctrader" {
 		b.weekendCloserOnce.Do(func() { go b.weekendPositionCloser(ctx) })
@@ -285,11 +286,9 @@ func (b *Bot) reconcileOpenPositions(ctx context.Context) {
 	)
 }
 
-
 type dealFetcher interface {
 	FetchClosedDeal(positionID string, openTime time.Time) (*provider.DealInfo, error)
 }
-
 
 func (b *Bot) reconcileOfflineClose(ctx context.Context, p position.Position) {
 	posID := p.ProviderPositionID
@@ -427,8 +426,8 @@ func (b *Bot) onCandleReceived(ctx context.Context, c provider.Candle) {
 	switch c.Timeframe {
 	case "M1":
 		if b.registry.Count() > 0 {
-			b.checkPeakDrawback(ctx, c.Close) 
-			b.logM1State(c.Close)             
+			b.checkPeakDrawback(ctx, c.Close)
+			b.logM1State(c.Close)
 		}
 	case "M5":
 		if c.OpenTime != b.lastCandleOpenTime {
@@ -520,8 +519,6 @@ func (b *Bot) processClosedCandle(ctx context.Context, _ float64) {
 	b.onTradeSignal(ctx, result, b.currentPrice, signalID)
 }
 
-
-
 func (b *Bot) sameDirLosingPosition(side string) string {
 	mid := b.currentPrice.Mid
 	if mid == 0 {
@@ -550,7 +547,7 @@ func (b *Bot) sameDirLosingPosition(side string) string {
 		lossInPrice = mid - newest.OpenPrice
 	}
 	if lossInPrice <= 0 {
-		return "" 
+		return ""
 	}
 
 	var slDist float64
@@ -1051,7 +1048,6 @@ func (b *Bot) recordCloseFill(ctx context.Context, exec provider.ExecutionEvent)
 	}, 0)
 }
 
-
 func (b *Bot) recordBrokerClose(ctx context.Context, exec provider.ExecutionEvent) {
 	posID := exec.ClosedPositionID
 
@@ -1314,7 +1310,6 @@ func ms(t time.Time) int64 {
 	return time.Since(t).Milliseconds()
 }
 
-
 func (b *Bot) sendTestPosition(ctx context.Context) {
 	if b.pendingOrder || b.registry.Count() > 0 {
 		slog.Info("DEV: test position skipped — order already pending or position open",
@@ -1478,5 +1473,32 @@ func (b *Bot) dailySummarySender(ctx context.Context) {
 			Realized:   pnlData.RealizedPnL,
 			Balance:    b.getBalance(),
 		})
+	}
+}
+
+func (b *Bot) botWatchDog(ctx context.Context) {
+	ticker := time.NewTicker(10 * time.Minute)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+
+		case <-ticker.C:
+			now := time.Now().UTC()
+			if now.Weekday() == time.Saturday || (now.Weekday() == time.Sunday && now.Hour() < 22) {
+				continue
+			}
+
+			var lastSignalTime time.Time
+			b.db.QueryRow(ctx, "SELECT MAX(created_at) FROM signals").Scan(&lastSignalTime)
+
+			if time.Since(lastSignalTime) > 30*time.Minute {
+				slog.Error("botWatchDog: no signals received during market hours in the last 30 minutes — exiting for systemd restart", "lastSignalTime", lastSignalTime)
+				os.Exit(1)
+			}
+
+		}
 	}
 }

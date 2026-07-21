@@ -100,6 +100,16 @@ func (s *SRBounce) Evaluate(states map[string]indicator.MarketState, currentPric
 		return hold("no RSI extreme at M15 structure")
 	}
 
+	if h1, ok := states["H1"]; ok && h1.IsWarmedUp {
+		if direction == "BUY" && h1.Regime == "trending_down" {
+			return  hold("BUY blocked -- H1 trending down")
+		}
+
+		if direction == "SELL" && h1.Regime == "trending_up" {
+			return hold("SELL blocked -- H1 trending up")
+		}
+	}
+
 	var slPrice, tpPrice float64
 	if direction == "BUY" {
 		slPrice = currentPrice - slATRMult*atr
