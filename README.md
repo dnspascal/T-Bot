@@ -1,30 +1,45 @@
-Trading bot
+# t-bot
 
-## Tech Stack
+Algorithmic trading bot for forex and commodities via cTrader.
 
-- **Language:** Go
-- **Database:** PostgreSQL
-- **Migrations:** golang-migrate
-- **Transport:** gRPC (protobuf)
+## Stack
 
-## Strategy
+- **Go** — core bot, order execution, risk management
+- **PostgreSQL + TimescaleDB** — tick and candle storage
+- **XGBoost / ONNX** — ML signal filter, trained on 13 months of M5/M15/H1 data
+- **Telegram** — trade notifications
 
-The bot uses a combined technical analysis strategy on M5 candles:
+## Strategies
 
-- **EMA Crossover** — fast EMA (9) vs slow EMA (21) generates the primary entry signal
-- **RSI Filter** — RSI (14) filters out exhausted moves; trades are skipped when RSI is overbought or oversold
-- **Confluence** — signals are graded weak or strong depending on whether RSI confirms the EMA direction
-- **Session Gate** — trades are only considered during active market hours (08:00–17:00 UTC, weekdays)
+| Name | Description |
+|------|-------------|
+| `sr_bounce` | RSI extreme at M15 S/R level, ML-filtered via XGBoost ONNX model |
+| `trend_follow` | EMA + ADX trend continuation |
+| `combined` | Runs both; first signal wins |
 
-## Usage
+## Configuration
+
+Copy `.env.example` and fill in credentials. Key vars:
+
+```
+STRATEGY=combined
+CTRADER_SYMBOL=EURUSD
+ML_MODEL_DIR=/path/to/models   # directory containing eurusd_model.onnx / xauusd_model.onnx
+```
+
+## ML Model
+
+Train locally, deploy as ONNX:
 
 ```bash
-# Run database migrations
+python3 ml/train.py          # outputs ml/eurusd_model.onnx, ml/xauusd_model.onnx
+scp ml/*.onnx server:~/models/
+```
+
+## Run
+
+```bash
 make migrate-up
-
-# Build the bot
 make build
-
-# Run the bot
 make run
 ```
