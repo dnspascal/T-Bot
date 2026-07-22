@@ -16,7 +16,7 @@ type PriceEvent struct {
 }
 
 type ExecutionEvent struct {
-	Type             string 
+	Type             string
 	Deal             DealInfo
 	HasDeal          bool
 	ClosedPositionID int64 // non-zero when broker closed position without deal (TP/SL hit)
@@ -32,12 +32,12 @@ type CtidAccount struct {
 }
 
 type Client struct {
-	conn         *Connection
-	accountID    int64
-	symbolID     int64
-	priceDivisor float64
-	absoluteSLTP bool    // true for commodities — broker rejects relative SL/TP
-	priceDecimals int    // decimal places allowed in order prices (2 for gold, 5 for EURUSD)
+	conn          *Connection
+	accountID     int64
+	symbolID      int64
+	priceDivisor  float64
+	absoluteSLTP  bool // true for commodities — broker rejects relative SL/TP
+	priceDecimals int  // decimal places allowed in order prices (2 for gold, 5 for EURUSD)
 
 	mu          sync.Mutex
 	authed      bool
@@ -46,13 +46,13 @@ type Client struct {
 	spotLogOnce atomic.Bool
 	PriceCh     chan PriceEvent
 	ExecutionCh chan ExecutionEvent
-	TrendbarCh  chan Trendbar 
+	TrendbarCh  chan Trendbar
 
-	traderResCh    chan TraderInfo
-	reconcileResCh chan []OpenPosition
-	trendbarsResCh chan []Trendbar
-	accountListCh  chan []CtidAccount
-	dealListResCh  chan []DealInfo
+	traderResCh     chan TraderInfo
+	reconcileResCh  chan []OpenPosition
+	trendbarsResCh  chan []Trendbar
+	accountListCh   chan []CtidAccount
+	dealListResCh   chan []DealInfo
 	symbolByIdResCh chan []LightSymbol
 	accountAuthedCh chan struct{}
 }
@@ -63,17 +63,17 @@ func NewClient(demo bool, accountID, symbolID int64, priceDivisor float64, pipSi
 		priceDecimals++
 	}
 	c := &Client{
-		accountID:     accountID,
-		symbolID:      symbolID,
-		priceDivisor:  priceDivisor,
-		absoluteSLTP:  pipSize >= 0.01, 
-		priceDecimals: priceDecimals,
-		PriceCh:        make(chan PriceEvent, 100),
-		ExecutionCh:    make(chan ExecutionEvent, 10),
-		TrendbarCh:     make(chan Trendbar, 10),
-		traderResCh:    make(chan TraderInfo, 1),
-		reconcileResCh: make(chan []OpenPosition, 1),
-		trendbarsResCh: make(chan []Trendbar, 1),
+		accountID:       accountID,
+		symbolID:        symbolID,
+		priceDivisor:    priceDivisor,
+		absoluteSLTP:    pipSize >= 0.01,
+		priceDecimals:   priceDecimals,
+		PriceCh:         make(chan PriceEvent, 100),
+		ExecutionCh:     make(chan ExecutionEvent, 10),
+		TrendbarCh:      make(chan Trendbar, 10),
+		traderResCh:     make(chan TraderInfo, 1),
+		reconcileResCh:  make(chan []OpenPosition, 1),
+		trendbarsResCh:  make(chan []Trendbar, 1),
 		accountListCh:   make(chan []CtidAccount, 1),
 		dealListResCh:   make(chan []DealInfo, 1),
 		symbolByIdResCh: make(chan []LightSymbol, 1),
@@ -157,18 +157,29 @@ func (c *Client) Reconcile() ([]OpenPosition, error) {
 		return nil, fmt.Errorf("Reconcile: timeout waiting for response")
 	}
 }
-		
+
 func (c *Client) SubscribeSpots() error {
 	return c.conn.SendRaw(ProtoOASubscribeSpotsReq,
 		encodeSubscribeSpotsReq(c.accountID, c.symbolID))
 }
-
 
 func (c *Client) SubscribeLiveTrendbar(period uint32) error {
 	return c.conn.SendRaw(ProtoOASubscribeLiveTrendbarReq,
 		encodeSubscribeLiveTrendbarReq(c.accountID, c.symbolID, period))
 }
 
+func (c *Client) FetchHistoricalTrendbarsFrom(period uint32, count int, toMs int64) ([]Trendbar, error) {
+	if err := c.conn.SendRaw(ProtoOAGetTrendbarsReq,
+		encodeGetTrendbarsReq(c.accountID, c.symbolID, period, toMs, uint32(count))); err != nil {
+		return nil, fmt.Errorf("FetchHistoricalTrendbarsFrom send: %w", err)
+	}
+	select {
+	case bars := <-c.trendbarsResCh:
+		return bars, nil
+	case <-time.After(15 * time.Second):
+		return nil, fmt.Errorf("FetchHistoricalTrendbarsFrom: timeout")
+	}
+}
 
 func (c *Client) FetchHistoricalTrendbars(period uint32, count int) ([]Trendbar, error) {
 	if err := c.conn.SendRaw(ProtoOAGetTrendbarsReq,
@@ -311,9 +322,9 @@ func (c *Client) handleMessage(payloadType uint32, payload []byte) {
 			default:
 			}
 		}
-		
+
 		for _, bar := range decodeLiveTrendbarEvents(payload) {
-	
+
 			select {
 			case c.TrendbarCh <- bar:
 			default:
@@ -429,7 +440,7 @@ func (c *Client) handleMessage(payloadType uint32, payload []byte) {
 		code, desc := decodeGenericError(payload)
 		slog.Error("cTrader protocol error", "code", code, "description", desc)
 
-	case 51: 
+	case 51:
 
 	default:
 		slog.Debug("unhandled message", "payloadType", payloadType, "payloadHex", fmt.Sprintf("%x", payload))

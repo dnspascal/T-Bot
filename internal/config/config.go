@@ -51,7 +51,8 @@ type Config struct {
 	WebhookSecret   string
 	WebhookPort     int
 
-	Strategy string
+	Strategy    string
+	MLModelDir  string 
 }
 
 func Load() (*Config, error) {
@@ -141,7 +142,8 @@ func Load() (*Config, error) {
 		WebhookSecret: getEnv("WEBHOOK_SECRET", ""),
 		WebhookPort:   webhookPort,
 
-		Strategy: getEnv("STRATEGY", "regime"),
+		Strategy:   getEnv("STRATEGY", "regime"),
+		MLModelDir: getEnv("ML_MODEL_DIR", "ml"),
 	}
 
 	return cfg, nil

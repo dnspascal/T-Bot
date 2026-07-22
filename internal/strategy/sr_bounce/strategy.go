@@ -1,45 +1,11 @@
-// Package srbounce implements the S/R bounce strategy.
-//
-// # Concept
-//
-// Wait for price to reach a structurally significant M15 support or resistance
-// level, confirmed by an RSI extreme on M5. This filters out mid-range noise
-// and only trades high-probability reversal zones.
-//
-// # Entry rules
-//
-//   BUY:  M5 RSI < 32  AND  price within 2×M15_ATR of M15 support
-//   SELL: M5 RSI > 68  AND  price within 2×M15_ATR of M15 resistance
-//
-// # SL/TP
-//
-//   SL: 1.5 × M15_ATR from entry
-//   TP: 2.5 × M15_ATR from entry  →  RR = 1.67 (above minRR=1.5)
-//
-// # Confluence scoring (bonus points toward tier)
-//
-//   +1 if M30 regime is ranging or aligns with trade direction
-//   +1 if H1 regime is ranging or aligns with trade direction
-//   +1 if M5 RSI is at extreme extreme (< 25 BUY / > 75 SELL)
-//
-// # Backtest results (35-day window, ~2026-07, real DB data)
-//
-//   Symbol   Side   Win%   Trades   Notes
-//   EURUSD   BUY    48.0%    356
-//   EURUSD   SELL   40.8%    407
-//   XAUUSD   BUY    52.1%     71    +226 pts average
-//   XAUUSD   SELL   36.0%     50
-//
-// EURUSD BUY and XAUUSD BUY exceed the 37.5% breakeven threshold at 1:1.67 RR.
-// EURUSD SELL is marginal; XAUUSD SELL is below breakeven and should be watched.
-//
-// STRATEGY env value: "sr_bounce"
 package srbounce
 
 import (
 	"math"
+	"time"
 
 	"github.com/denismgaya/t-bot/internal/indicator"
+	"github.com/denismgaya/t-bot/internal/ml"
 	"github.com/denismgaya/t-bot/internal/strategy"
 )
 
@@ -55,10 +21,16 @@ const (
 	minATRPips       = 3.0
 )
 
-// SRBounce is the S/R bounce strategy.
-type SRBounce struct{}
+type SRBounce struct {
+	predictor *ml.Predictor
+	threshold float32
+	symbolID  float32 
+	prevRSI   float64
+}
 
-func New() *SRBounce { return &SRBounce{} }
+func New(predictor *ml.Predictor, threshold float32, symbolID float32) *SRBounce {
+	return &SRBounce{predictor: predictor, threshold: threshold, symbolID: symbolID}
+}
 
 func (s *SRBounce) Name() string { return "sr_bounce" }
 
@@ -129,7 +101,46 @@ func (s *SRBounce) Evaluate(states map[string]indicator.MarketState, currentPric
 		return hold("risk/reward too low")
 	}
 
-	// Confluence: 1 base + HTF alignment bonuses
+	if s.predictor != nil {
+		rsiVel := float32(m5.RSI - s.prevRSI)
+		var rsiM15, rsiH1 float32
+		if m15state, ok := states["M15"]; ok {
+			rsiM15 = float32(m15state.RSI)
+		}
+		if h1state, ok := states["H1"]; ok {
+			rsiH1 = float32(h1state.RSI)
+		}
+		isSell := float32(0)
+		if direction == "SELL" {
+			isSell = 1
+		}
+		aboveEMA50 := float32(0)
+		if m5.EMA50 > 0 && currentPrice > m5.EMA50 {
+			aboveEMA50 = 1
+		}
+		aboveEMA200 := float32(0)
+		if m5.EMA200 > 0 && currentPrice > m5.EMA200 {
+			aboveEMA200 = 1
+		}
+		prob, err := s.predictor.Predict(ml.Features{
+			RSI:         float32(m5.RSI),
+			RSIVel:      rsiVel,
+			RSIM15:      rsiM15,
+			RSIH1:       rsiH1,
+			ATR:         float32(m5.ATR),
+			AboveEMA50:  aboveEMA50,
+			AboveEMA200: aboveEMA200,
+			Hour:        float32(barHour(m5.BarTime)),
+			Symbol:      s.symbolID,
+			IsSell:      isSell,
+		})
+		if err == nil && prob < s.threshold {
+			s.prevRSI = m5.RSI
+			return hold("ml filter rejected")
+		}
+	}
+	s.prevRSI = m5.RSI
+
 	confluence := 1
 	if m30, ok := states["M30"]; ok && m30.IsWarmedUp {
 		if (direction == "BUY" && (m30.Regime == "ranging" || m30.Regime == "trending_up")) ||
@@ -143,7 +154,6 @@ func (s *SRBounce) Evaluate(states map[string]indicator.MarketState, currentPric
 			confluence++
 		}
 	}
-	// RSI at extreme extreme — strongest reversal signal
 	if (direction == "BUY" && m5.RSI < rsiBuyExtreme) || (direction == "SELL" && m5.RSI > rsiSellExtreme) {
 		confluence++
 	}
@@ -164,7 +174,6 @@ func (s *SRBounce) Evaluate(states map[string]indicator.MarketState, currentPric
 func computeConfidence(m5 indicator.MarketState, direction string, slPips, tpPips float64) float64 {
 	var score float64
 
-	// RSI extremity: the further from 50, the stronger the reversal signal
 	rsiDev := 50.0 - m5.RSI
 	if direction == "SELL" {
 		rsiDev = m5.RSI - 50.0
@@ -173,14 +182,16 @@ func computeConfidence(m5 indicator.MarketState, direction string, slPips, tpPip
 		score += math.Min(rsiDev/25.0, 1.0) * 50
 	}
 
-	// R:R above minimum
 	rr := tpPips / slPips
 	score += math.Min((rr-minRR)/minRR, 1.0) * 30
 
-	// Volume confirmation
 	if m5.Volume > 0 && m5.VolumeMA > 0 && m5.Volume > m5.VolumeMA {
 		score += 20
 	}
 
 	return math.Min(score/100.0, 1.0)
+}
+
+func barHour(barTimeMs int64) int {
+	return time.Unix(barTimeMs/1000, 0).UTC().Hour()
 }

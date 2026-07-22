@@ -9,6 +9,7 @@ import (
 	"github.com/denismgaya/t-bot/internal/bot"
 	"github.com/denismgaya/t-bot/internal/config"
 	"github.com/denismgaya/t-bot/internal/marketstate"
+	"github.com/denismgaya/t-bot/internal/ml"
 	"github.com/denismgaya/t-bot/internal/notify"
 	"github.com/denismgaya/t-bot/internal/provider"
 	"github.com/denismgaya/t-bot/internal/risk"
@@ -16,7 +17,7 @@ import (
 	combined "github.com/denismgaya/t-bot/internal/strategy/combined"
 	"github.com/denismgaya/t-bot/internal/strategy/regime"
 	srbounce "github.com/denismgaya/t-bot/internal/strategy/sr_bounce"
-	 "github.com/denismgaya/t-bot/internal/strategy/trend_follow"
+	"github.com/denismgaya/t-bot/internal/strategy/trend_follow"
 )
 
 type BotInitResult struct {
@@ -70,7 +71,7 @@ func initializeBot(ctx context.Context, cfg *config.Config, svc *Services, prov 
 		lotUnit = 100 // gold micro lot in cTrader API units
 	}
 
-	strat, err := buildStrategy(cfg.Strategy)
+	strat, err := buildStrategy(cfg.Strategy, symbol, cfg.MLModelDir)
 	if err != nil {
 		log.Fatal("build strategy:", err)
 	}
@@ -86,17 +87,45 @@ func initializeBot(ctx context.Context, cfg *config.Config, svc *Services, prov 
 	}
 }
 
-func buildStrategy(name string) (strategy.Strategy, error) {
+func buildStrategy(name, symbol, mlModelDir string) (strategy.Strategy, error) {
+	newSRBounce := func() *srbounce.SRBounce {
+		return buildSRBounce(symbol, mlModelDir)
+	}
 	switch name {
 	case "", "regime":
 		return regime.New(), nil
 	case "sr_bounce":
-		return srbounce.New(), nil
+		return newSRBounce(), nil
 	case "trend_follow":
 		return trendfollow.New(), nil
 	case "combined":
-		return combined.New(trendfollow.New(), srbounce.New()), nil
+		return combined.New(trendfollow.New(), newSRBounce()), nil
 	default:
 		return nil, fmt.Errorf("unknown strategy %q — valid options: regime, sr_bounce", name)
 	}
+}
+
+func buildSRBounce(symbol, mlModelDir string) *srbounce.SRBounce {
+	var modelFile string
+	var threshold float32
+	var symbolID float32
+
+	switch symbol {
+	case "XAUUSD":
+		modelFile = mlModelDir + "/xauusd_model.onnx"
+		threshold = 0.75
+		symbolID = 1
+	default: // EURUSD
+		modelFile = mlModelDir + "/eurusd_model.onnx"
+		threshold = 0.65
+		symbolID = 0
+	}
+
+	predictor, err := ml.NewPredictor(modelFile)
+	if err != nil {
+		slog.Warn("ml predictor not loaded — running without ML filter", "symbol", symbol, "err", err)
+		return srbounce.New(nil, 0, symbolID)
+	}
+	slog.Info("ml predictor loaded", "symbol", symbol, "model", modelFile, "threshold", threshold)
+	return srbounce.New(predictor, threshold, symbolID)
 }

@@ -18,6 +18,8 @@ type MarketState struct {
 	// Indicators
 	EMAFast float64 // EMA(9)
 	EMASlow float64 // EMA(21)
+	EMA50   float64 // EMA(50)
+	EMA200  float64 // EMA(200)
 	RSI     float64 // RSI(14)
 	ADX     float64 // ADX(14)
 	ATR     float64 // ATR(14)
@@ -44,6 +46,8 @@ type MarketState struct {
 type Calculator struct {
 	ema9      *EMA
 	ema21     *EMA
+	ema50     *EMA
+	ema200    *EMA
 	rsi       *RSI
 	atr       *ATR
 	adx       *ADX
@@ -52,11 +56,13 @@ type Calculator struct {
 
 func NewCalculator() *Calculator {
 	return &Calculator{
-		ema9:  NewEMA(9),
-		ema21: NewEMA(21),
-		rsi:   NewRSI(14),
-		atr:   NewATR(14),
-		adx:   NewADX(14),
+		ema9:   NewEMA(9),
+		ema21:  NewEMA(21),
+		ema50:  NewEMA(50),
+		ema200: NewEMA(200),
+		rsi:    NewRSI(14),
+		atr:    NewATR(14),
+		adx:    NewADX(14),
 	}
 }
 
@@ -71,6 +77,8 @@ func (c *Calculator) Calculate(
 ) MarketState {
 	c.ema9.Add(close)
 	c.ema21.Add(close)
+	c.ema50.Add(close)
+	c.ema200.Add(close)
 	c.rsi.Add(close)
 	c.atr.Add(high, low, close)
 	c.adx.Add(high, low, close)
@@ -91,6 +99,8 @@ func (c *Calculator) Calculate(
 		Volume:   volume,
 		EMAFast:  c.ema9.Value(),
 		EMASlow:  c.ema21.Value(),
+		EMA50:    c.ema50.Value(),
+		EMA200:   c.ema200.Value(),
 		RSI:      c.rsi.Value(),
 		ADX:      c.adx.Value(),
 		ATR:      c.atr.Value(),
