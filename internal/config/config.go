@@ -52,7 +52,8 @@ type Config struct {
 	WebhookPort     int
 
 	Strategy    string
-	MLModelDir  string 
+	MLModelDir  string
+	MLOnnxLib   string // path to libonnxruntime.so; empty = use default search
 }
 
 func Load() (*Config, error) {
@@ -144,6 +145,7 @@ func Load() (*Config, error) {
 
 		Strategy:   getEnv("STRATEGY", "regime"),
 		MLModelDir: getEnv("ML_MODEL_DIR", "ml"),
+		MLOnnxLib:  getEnv("ML_ONNX_LIB", ""),
 	}
 
 	return cfg, nil

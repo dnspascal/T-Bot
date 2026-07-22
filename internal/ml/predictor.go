@@ -7,6 +7,19 @@ import (
 	ort "github.com/yalue/onnxruntime_go"
 )
 
+var initOnce sync.Once
+var initErr error
+
+func initRuntime(sharedLibPath string) error {
+	initOnce.Do(func() {
+		if sharedLibPath != "" {
+			ort.SetSharedLibraryPath(sharedLibPath)
+		}
+		initErr = ort.InitializeEnvironment()
+	})
+	return initErr
+}
+
 // Feature order must match train.py FEATURES + ['symbol', 'is_sell']
 // [rsi, rsi_vel, rsi_m15, rsi_h1, atr, above_ema50, above_ema200, hour, symbol, is_sell]
 const numFeatures = 10
@@ -32,7 +45,10 @@ type Features struct {
 	IsSell      float32 // 1=SELL, 0=BUY
 }
 
-func NewPredictor(modelPath string) (*Predictor, error) {
+func NewPredictor(modelPath, sharedLibPath string) (*Predictor, error) {
+	if err := initRuntime(sharedLibPath); err != nil {
+		return nil, fmt.Errorf("ml: init runtime: %w", err)
+	}
 	inputTensor, err := ort.NewEmptyTensor[float32](ort.NewShape(1, numFeatures))
 	if err != nil {
 		return nil, fmt.Errorf("ml: input tensor: %w", err)

@@ -71,7 +71,7 @@ func initializeBot(ctx context.Context, cfg *config.Config, svc *Services, prov 
 		lotUnit = 100 // gold micro lot in cTrader API units
 	}
 
-	strat, err := buildStrategy(cfg.Strategy, symbol, cfg.MLModelDir)
+	strat, err := buildStrategy(cfg.Strategy, symbol, cfg.MLModelDir, cfg.MLOnnxLib)
 	if err != nil {
 		log.Fatal("build strategy:", err)
 	}
@@ -87,9 +87,9 @@ func initializeBot(ctx context.Context, cfg *config.Config, svc *Services, prov 
 	}
 }
 
-func buildStrategy(name, symbol, mlModelDir string) (strategy.Strategy, error) {
+func buildStrategy(name, symbol, mlModelDir, mlOnnxLib string) (strategy.Strategy, error) {
 	newSRBounce := func() *srbounce.SRBounce {
-		return buildSRBounce(symbol, mlModelDir)
+		return buildSRBounce(symbol, mlModelDir, mlOnnxLib)
 	}
 	switch name {
 	case "", "regime":
@@ -105,7 +105,7 @@ func buildStrategy(name, symbol, mlModelDir string) (strategy.Strategy, error) {
 	}
 }
 
-func buildSRBounce(symbol, mlModelDir string) *srbounce.SRBounce {
+func buildSRBounce(symbol, mlModelDir, mlOnnxLib string) *srbounce.SRBounce {
 	var modelFile string
 	var threshold float32
 	var symbolID float32
@@ -121,7 +121,7 @@ func buildSRBounce(symbol, mlModelDir string) *srbounce.SRBounce {
 		symbolID = 0
 	}
 
-	predictor, err := ml.NewPredictor(modelFile)
+	predictor, err := ml.NewPredictor(modelFile, mlOnnxLib)
 	if err != nil {
 		slog.Warn("ml predictor not loaded — running without ML filter", "symbol", symbol, "err", err)
 		return srbounce.New(nil, 0, symbolID)
