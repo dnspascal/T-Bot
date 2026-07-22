@@ -16,7 +16,7 @@ type PriceEvent struct {
 }
 
 type ExecutionEvent struct {
-	Type             string // ORDER_FILLED | ORDER_REJECTED | ORDER_CANCELLED | ...
+	Type             string 
 	Deal             DealInfo
 	HasDeal          bool
 	ClosedPositionID int64 // non-zero when broker closed position without deal (TP/SL hit)
@@ -58,9 +58,6 @@ type Client struct {
 }
 
 func NewClient(demo bool, accountID, symbolID int64, priceDivisor float64, pipSize float64) *Client {
-	// priceDecimals = number of decimal places the broker allows in order prices.
-	// Formula: pip has N decimal places, broker allows N+1 (fractional pip).
-	// e.g. EURUSD pipSize=0.0001 → 4+1=5 dp; XAUUSD pipSize=0.10 → 1+1=2 dp.
 	priceDecimals := 0
 	for v := pipSize / 10; v < 1; v *= 10 {
 		priceDecimals++
@@ -69,7 +66,7 @@ func NewClient(demo bool, accountID, symbolID int64, priceDivisor float64, pipSi
 		accountID:     accountID,
 		symbolID:      symbolID,
 		priceDivisor:  priceDivisor,
-		absoluteSLTP:  pipSize >= 0.01, // commodities use absolute; forex uses relative ticks
+		absoluteSLTP:  pipSize >= 0.01, 
 		priceDecimals: priceDecimals,
 		PriceCh:        make(chan PriceEvent, 100),
 		ExecutionCh:    make(chan ExecutionEvent, 10),
