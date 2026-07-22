@@ -22,3 +22,6 @@ coverage/
 /migrate
 logs/
 symbols
+backfill
+ml/*.csv
+ml/*.png
