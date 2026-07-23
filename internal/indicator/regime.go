@@ -1,24 +1,9 @@
 package indicator
 
-import "math"
+import (
+	"math"
 
-const (
-	TrendingUp   = "trending_up"
-	TrendingDown = "trending_down"
-	Ranging      = "ranging"
-	Breakout     = "breakout"
-)
-
-const (
-	VolatilityExpanding   = "expanding"
-	VolatilityContracting = "contracting"
-	VolatilityStable      = "stable"
-)
-
-const (
-	MomentumRising  = "rising"
-	MomentumFalling = "falling"
-	MomentumStable  = "stable"
+	"github.com/denismgaya/t-bot/internal/config"
 )
 
 func CalculateRegime(emaFast, emaSlow, adx, high, low float64, ohlc []OHLC) string {
@@ -36,43 +21,43 @@ func CalculateRegime(emaFast, emaSlow, adx, high, low float64, ohlc []OHLC) stri
 			}
 		}
 		if high > refHigh || low < refLow {
-			return Breakout
+			return config.Breakout
 		}
 	}
 
 	if emaFast == 0 || emaSlow == 0 {
-		return Ranging
+		return config.Ranging
 	}
 
 	gap := math.Abs(emaFast-emaSlow) / ((emaFast + emaSlow) / 2)
 	if gap < 0.001 {
-		return Ranging
+		return config.Ranging
 	}
 
 	if emaFast > emaSlow {
-		return TrendingUp
+		return config.TrendingUp
 	}
 
-	return TrendingDown
+	return config.TrendingDown
 }
 
 func CalculateVolatilityTrend(currentATR, prevATR float64) string {
 	if prevATR == 0 {
-		return VolatilityStable
+		return config.VolatilityStable
 	}
 	atrChange := ((currentATR - prevATR) / prevATR) * 100
 	if atrChange > 2 {
-		return VolatilityExpanding
+		return config.VolatilityExpanding
 	}
 	if atrChange < -2 {
-		return VolatilityContracting
+		return config.VolatilityContracting
 	}
-	return VolatilityStable
+	return config.VolatilityStable
 }
 
 func CalculateMomentumDirection(rsi float64, closes []float64) string {
 	if len(closes) < 4 {
-		return MomentumStable
+		return config.MomentumStable
 	}
 
 	recent := closes[len(closes)-1]
@@ -82,11 +67,11 @@ func CalculateMomentumDirection(rsi float64, closes []float64) string {
 
 	switch {
 	case rsi > 60 && priceRising:
-		return MomentumRising
+		return config.MomentumRising
 	case rsi < 40 && priceFalling:
-		return MomentumFalling
+		return config.MomentumFalling
 	default:
-		return MomentumStable
+		return config.MomentumStable
 	}
 }
 
