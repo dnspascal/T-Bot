@@ -48,12 +48,12 @@ func (t *TelegramChannel) format(eventType EventType, payload any) string {
 			dir = "🔴 SELL"
 		}
 		return fmt.Sprintf(
-			"%s <b>%s</b> opened\n📍 Price: %s\n🛡 SL: %s (%.1f pips)\n🎯 TP: %s (%.1f pips)\n📊 Confluence: %d",
+			"%s <b>%s</b> opened\n📍 Price: %s\n🛡 SL: %s (%.1f pips)\n🎯 TP: %s (%.1f pips)\n🤖 Strategy: %s",
 			dir, p.Symbol,
 			formatPrice(p.Price),
 			formatPrice(p.SLPrice), p.SLPips,
 			formatPrice(p.TPPrice), p.TPPips,
-			p.Confluence,
+			p.Strategy,
 		)
 
 	case EventTradeClosed:

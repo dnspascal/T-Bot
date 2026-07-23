@@ -16,6 +16,12 @@ type Processor struct {
 	calculator *indicator.Calculator
 	repo       Repository
 	lastID     string
+
+	// Pre-session high/low accumulators (London and NY)
+	londonPreHigh float64
+	londonPreLow  float64
+	nyPreHigh     float64
+	nyPreLow      float64
 }
 
 func NewProcessor(
@@ -47,6 +53,51 @@ func (p *Processor) WarmCandle(openTime int64, open, high, low, close float64, v
 		historicalVolumes,
 		historicalOHLC,
 	)
+	p.accumulateSessionRange(openTime, high, low)
+}
+
+// accumulateSessionRange updates the pre-session high/low accumulators.
+// Called on every candle so the accumulators are ready when session opens.
+func (p *Processor) accumulateSessionRange(openTimeMs int64, high, low float64) {
+	barUTC := time.Unix(openTimeMs/1000, 0).UTC()
+	h, m := barUTC.Hour(), barUTC.Minute()
+
+	switch {
+	case h == 6: // pre-London accumulation window
+		if p.londonPreHigh == 0 || high > p.londonPreHigh {
+			p.londonPreHigh = high
+		}
+		if p.londonPreLow == 0 || low < p.londonPreLow {
+			p.londonPreLow = low
+		}
+	case h == 7 && m >= 30: // London session window closed — reset for next day
+		p.londonPreHigh = 0
+		p.londonPreLow = 0
+	case h == 12: // pre-NY accumulation window
+		if p.nyPreHigh == 0 || high > p.nyPreHigh {
+			p.nyPreHigh = high
+		}
+		if p.nyPreLow == 0 || low < p.nyPreLow {
+			p.nyPreLow = low
+		}
+	case h == 13 && m >= 30: // NY session window closed — reset for next day
+		p.nyPreHigh = 0
+		p.nyPreLow = 0
+	}
+}
+
+// injectSessionRange sets SessionHigh/Low on the market state if we are inside a session open window.
+func (p *Processor) injectSessionRange(openTimeMs int64, ms *indicator.MarketState) {
+	barUTC := time.Unix(openTimeMs/1000, 0).UTC()
+	h, m := barUTC.Hour(), barUTC.Minute()
+
+	if h == 7 && m < 30 && p.londonPreHigh > 0 {
+		ms.SessionHigh = p.londonPreHigh
+		ms.SessionLow = p.londonPreLow
+	} else if h == 13 && m < 30 && p.nyPreHigh > 0 {
+		ms.SessionHigh = p.nyPreHigh
+		ms.SessionLow = p.nyPreLow
+	}
 }
 
 func (p *Processor) Commit(ctx context.Context) error {
@@ -72,6 +123,9 @@ func (p *Processor) ProcessCandle(ctx context.Context, openTime int64, open, hig
 		historicalVolumes,
 		historicalOHLC,
 	)
+
+	p.accumulateSessionRange(openTime, high, low)
+	p.injectSessionRange(openTime, &marketState)
 
 	marketState.ProcessingUS = time.Since(receivedAt).Microseconds()
 
