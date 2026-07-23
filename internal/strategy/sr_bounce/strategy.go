@@ -79,8 +79,16 @@ func (s *SRBounce) Evaluate(states map[string]indicator.MarketState, currentPric
 			return hold("BUY blocked -- H1 trending down")
 		}
 
+		if direction == config.SignalBuy && h1.EMA50 > 0 && currentPrice < h1.EMA50 {
+			return hold("BUY blocked -- H1 below EMA50")
+		}
+
 		if direction == config.SignalSell && h1.Regime == config.TrendingUp {
 			return hold("SELL blocked -- H1 trending up")
+		}
+
+		if direction == config.SignalSell && h1.EMA50 > 0 && currentPrice > h1.EMA50 {
+			return hold("SELL blocked -- H1 above EMA50")
 		}
 	}
 
