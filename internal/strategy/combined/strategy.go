@@ -1,6 +1,7 @@
 package combined
 
 import (
+	"github.com/denismgaya/t-bot/internal/config"
 	"github.com/denismgaya/t-bot/internal/indicator"
 	"github.com/denismgaya/t-bot/internal/strategy"
 )
@@ -27,11 +28,11 @@ func (c *CombinedStrategy) Evaluate(states map[string]indicator.MarketState, cur
 
 	for _, s := range c.strategies {
 		result := s.Evaluate(states, currentPrice, pipSize)
-		if result.Signal != strategy.SignalHold {
+		if result.Signal != config.SignalHold {
 			result.StrategyName = s.Name()
 			return result
 		}
 	}
 
-	return strategy.EntryResult{Signal: strategy.SignalHold, Reason: "no strategy signaled a trade"}
+	return strategy.EntryResult{Signal: config.SignalHold, Reason: "no strategy signaled a trade"}
 }
