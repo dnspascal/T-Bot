@@ -39,6 +39,10 @@ type MarketState struct {
 	// Volume context
 	VolumeMA int64
 
+	// Session open range (populated during London 07:00-07:30 UTC and NY 13:00-13:30 UTC)
+	SessionHigh float64
+	SessionLow  float64
+
 	// Status
 	IsWarmedUp bool // True when EMA(21) is seeded
 }

@@ -916,14 +916,14 @@ func (b *Bot) recordOpenFill(ctx context.Context, exec provider.ExecutionEvent) 
 		slPips := math.Abs(ep-b.pendingSLPrice) / b.pipSize
 		tpPips := math.Abs(b.pendingTPPrice-ep) / b.pipSize
 		go b.dispatcher.Dispatch(ctx, notify.EventTradeOpened, notify.TradeOpenedPayload{
-			Symbol:     b.symbol,
-			Side:       b.pendingSide,
-			Price:      ep,
-			SLPrice:    b.pendingSLPrice,
-			TPPrice:    b.pendingTPPrice,
-			SLPips:     slPips,
-			TPPips:     tpPips,
-			Confluence: 0,
+			Symbol:   b.symbol,
+			Side:     b.pendingSide,
+			Price:    ep,
+			SLPrice:  b.pendingSLPrice,
+			TPPrice:  b.pendingTPPrice,
+			SLPips:   slPips,
+			TPPips:   tpPips,
+			Strategy: b.pendingStrategyName,
 		})
 	}
 
@@ -1452,7 +1452,6 @@ func (b *Bot) TodayText(ctx context.Context) string {
 	)
 }
 
-// dailySummarySender fires once per day at 22:00 UTC (after NY close).
 func (b *Bot) dailySummarySender(ctx context.Context) {
 	if b.dispatcher == nil {
 		return
