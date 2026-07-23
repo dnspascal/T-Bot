@@ -11,14 +11,14 @@ const (
 )
 
 type TradeOpenedPayload struct {
-	Symbol      string
-	Side        string
-	Price       float64
-	SLPrice     float64
-	TPPrice     float64
-	SLPips      float64
-	TPPips      float64
-	Confluence  int
+	Symbol   string
+	Side     string
+	Price    float64
+	SLPrice  float64
+	TPPrice  float64
+	SLPips   float64
+	TPPips   float64
+	Strategy string
 }
 
 type TradeClosedPayload struct {
