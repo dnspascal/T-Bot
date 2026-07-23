@@ -1,10 +1,9 @@
 package indicator
 
-const (
-    TrendingUp   = "trending_up"
-    TrendingDown = "trending_down"
-    Ranging      = "ranging"
-    Breakout     = "breakout"
+import (
+	"math"
+
+	"github.com/denismgaya/t-bot/internal/config"
 )
 
 func CalculateRegime(emaFast, emaSlow, adx, high, low float64, ohlc []OHLC) string {
@@ -22,44 +21,45 @@ func CalculateRegime(emaFast, emaSlow, adx, high, low float64, ohlc []OHLC) stri
 			}
 		}
 		if high > refHigh || low < refLow {
-			return "breakout"
+			return config.Breakout
 		}
 	}
 
-	if adx < 25 {
-		return "ranging"
+	if emaFast == 0 || emaSlow == 0 {
+		return config.Ranging
 	}
+
+	gap := math.Abs(emaFast-emaSlow) / ((emaFast + emaSlow) / 2)
+	if gap < 0.001 {
+		return config.Ranging
+	}
+
 	if emaFast > emaSlow {
-		return "trending_up"
+		return config.TrendingUp
 	}
-	if emaFast < emaSlow {
-		return "trending_down"
-	}
-	return "ranging"
+
+	return config.TrendingDown
 }
 
 func CalculateVolatilityTrend(currentATR, prevATR float64) string {
 	if prevATR == 0 {
-		return "stable"
+		return config.VolatilityStable
 	}
 	atrChange := ((currentATR - prevATR) / prevATR) * 100
 	if atrChange > 2 {
-		return "expanding"
+		return config.VolatilityExpanding
 	}
 	if atrChange < -2 {
-		return "contracting"
+		return config.VolatilityContracting
 	}
-	return "stable"
+	return config.VolatilityStable
 }
 
-// CalculateMomentumDirection determines if momentum is rising, falling, or stable.
-// Both RSI and the 3-bar price slope must agree to avoid false signals.
 func CalculateMomentumDirection(rsi float64, closes []float64) string {
 	if len(closes) < 4 {
-		return "stable"
+		return config.MomentumStable
 	}
 
-	// 3-bar slope: compare the last close to the close 3 bars ago.
 	recent := closes[len(closes)-1]
 	prior := closes[len(closes)-4]
 	priceRising := recent > prior
@@ -67,11 +67,11 @@ func CalculateMomentumDirection(rsi float64, closes []float64) string {
 
 	switch {
 	case rsi > 60 && priceRising:
-		return "rising"
+		return config.MomentumRising
 	case rsi < 40 && priceFalling:
-		return "falling"
+		return config.MomentumFalling
 	default:
-		return "stable"
+		return config.MomentumStable
 	}
 }
 

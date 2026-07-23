@@ -76,7 +76,8 @@ type Regime struct{}
 
 func New() *Regime { return &Regime{} }
 
-func (r *Regime) Name() string { return "regime" }
+func (r *Regime) Name() string            { return "regime" }
+func (r *Regime) UsesTrendWatcher() bool { return true }
 
 func (r *Regime) Evaluate(states map[string]indicator.MarketState, currentPrice float64, pipSize float64) strategy.EntryResult {
 	hold := func(reason string) strategy.EntryResult {

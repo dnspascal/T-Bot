@@ -15,6 +15,7 @@ const (
 	SignalHold = "HOLD"
 )
 
+
 type EntryResult struct {
 	Signal       string
 	Confluence   int
@@ -33,6 +34,8 @@ type Strategy interface {
 	Name() string
 
 	Evaluate(states map[string]indicator.MarketState, currentPrice, pipSize float64) EntryResult
+
+	UsesTrendWatcher() bool
 }
 
 func ConfluenceToTier(c int) int {

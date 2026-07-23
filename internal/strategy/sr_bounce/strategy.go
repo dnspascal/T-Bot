@@ -4,6 +4,7 @@ import (
 	"math"
 	"time"
 
+	"github.com/denismgaya/t-bot/internal/config"
 	"github.com/denismgaya/t-bot/internal/indicator"
 	"github.com/denismgaya/t-bot/internal/ml"
 	"github.com/denismgaya/t-bot/internal/strategy"
@@ -24,7 +25,7 @@ const (
 type SRBounce struct {
 	predictor *ml.Predictor
 	threshold float32
-	symbolID  float32 
+	symbolID  float32
 	prevRSI   float64
 }
 
@@ -32,19 +33,20 @@ func New(predictor *ml.Predictor, threshold float32, symbolID float32) *SRBounce
 	return &SRBounce{predictor: predictor, threshold: threshold, symbolID: symbolID}
 }
 
-func (s *SRBounce) Name() string { return "sr_bounce" }
+func (s *SRBounce) Name() string           { return "sr_bounce" }
+func (s *SRBounce) UsesTrendWatcher() bool { return false }
 
 func (s *SRBounce) Evaluate(states map[string]indicator.MarketState, currentPrice float64, pipSize float64) strategy.EntryResult {
 	hold := func(reason string) strategy.EntryResult {
-		return strategy.EntryResult{Signal: "HOLD", Reason: reason}
+		return strategy.EntryResult{Signal: config.SignalHold, Reason: reason}
 	}
 
-	m5, ok := states["M5"]
+	m5, ok := states[config.PeriodM5]
 	if !ok || !m5.IsWarmedUp {
 		return hold("M5 not warmed up")
 	}
 
-	m15, ok := states["M15"]
+	m15, ok := states[config.PeriodM15]
 	if !ok || !m15.IsWarmedUp {
 		return hold("M15 not warmed up")
 	}
@@ -65,25 +67,33 @@ func (s *SRBounce) Evaluate(states map[string]indicator.MarketState, currentPric
 	var direction string
 	switch {
 	case nearSupport && m5.RSI < rsiBuyThreshold:
-		direction = "BUY"
+		direction = config.SignalBuy
 	case nearResistance && m5.RSI > rsiSellThreshold:
-		direction = "SELL"
+		direction = config.SignalSell
 	default:
 		return hold("no RSI extreme at M15 structure")
 	}
 
-	if h1, ok := states["H1"]; ok && h1.IsWarmedUp {
-		if direction == "BUY" && h1.Regime == "trending_down" {
-			return  hold("BUY blocked -- H1 trending down")
+	if h1, ok := states[config.PeriodH1]; ok && h1.IsWarmedUp {
+		if direction == config.SignalBuy && h1.Regime == config.TrendingDown {
+			return hold("BUY blocked -- H1 trending down")
 		}
 
-		if direction == "SELL" && h1.Regime == "trending_up" {
+		if direction == config.SignalBuy && h1.EMA50 > 0 && currentPrice < h1.EMA50 {
+			return hold("BUY blocked -- H1 below EMA50")
+		}
+
+		if direction == config.SignalSell && h1.Regime == config.TrendingUp {
 			return hold("SELL blocked -- H1 trending up")
+		}
+
+		if direction == config.SignalSell && h1.EMA50 > 0 && currentPrice > h1.EMA50 {
+			return hold("SELL blocked -- H1 above EMA50")
 		}
 	}
 
 	var slPrice, tpPrice float64
-	if direction == "BUY" {
+	if direction == config.SignalBuy {
 		slPrice = currentPrice - slATRMult*atr
 		tpPrice = currentPrice + tpATRMult*atr
 	} else {
@@ -104,14 +114,14 @@ func (s *SRBounce) Evaluate(states map[string]indicator.MarketState, currentPric
 	if s.predictor != nil {
 		rsiVel := float32(m5.RSI - s.prevRSI)
 		var rsiM15, rsiH1 float32
-		if m15state, ok := states["M15"]; ok {
+		if m15state, ok := states[config.PeriodM15]; ok {
 			rsiM15 = float32(m15state.RSI)
 		}
-		if h1state, ok := states["H1"]; ok {
+		if h1state, ok := states[config.PeriodH1]; ok {
 			rsiH1 = float32(h1state.RSI)
 		}
 		isSell := float32(0)
-		if direction == "SELL" {
+		if direction == config.SignalSell {
 			isSell = 1
 		}
 		aboveEMA50 := float32(0)
@@ -142,19 +152,19 @@ func (s *SRBounce) Evaluate(states map[string]indicator.MarketState, currentPric
 	s.prevRSI = m5.RSI
 
 	confluence := 1
-	if m30, ok := states["M30"]; ok && m30.IsWarmedUp {
-		if (direction == "BUY" && (m30.Regime == "ranging" || m30.Regime == "trending_up")) ||
-			(direction == "SELL" && (m30.Regime == "ranging" || m30.Regime == "trending_down")) {
+	if m30, ok := states[config.PeriodM30]; ok && m30.IsWarmedUp {
+		if (direction == config.SignalBuy && (m30.Regime == config.Ranging || m30.Regime == config.TrendingUp)) ||
+			(direction == config.SignalSell && (m30.Regime == config.Ranging || m30.Regime == config.TrendingDown)) {
 			confluence++
 		}
 	}
-	if h1, ok := states["H1"]; ok && h1.IsWarmedUp {
-		if (direction == "BUY" && (h1.Regime == "ranging" || h1.Regime == "trending_up")) ||
-			(direction == "SELL" && (h1.Regime == "ranging" || h1.Regime == "trending_down")) {
+	if h1, ok := states[config.PeriodH1]; ok && h1.IsWarmedUp {
+		if (direction == config.SignalBuy && (h1.Regime == config.Ranging || h1.Regime == config.TrendingUp)) ||
+			(direction == config.SignalSell && (h1.Regime == config.Ranging || h1.Regime == config.TrendingDown)) {
 			confluence++
 		}
 	}
-	if (direction == "BUY" && m5.RSI < rsiBuyExtreme) || (direction == "SELL" && m5.RSI > rsiSellExtreme) {
+	if (direction == config.SignalBuy && m5.RSI < rsiBuyExtreme) || (direction == config.SignalSell && m5.RSI > rsiSellExtreme) {
 		confluence++
 	}
 
@@ -175,7 +185,7 @@ func computeConfidence(m5 indicator.MarketState, direction string, slPips, tpPip
 	var score float64
 
 	rsiDev := 50.0 - m5.RSI
-	if direction == "SELL" {
+	if direction == config.SignalSell {
 		rsiDev = m5.RSI - 50.0
 	}
 	if rsiDev > 0 {
