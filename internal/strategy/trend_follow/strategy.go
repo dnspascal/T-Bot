@@ -16,7 +16,8 @@ const (
 
 func New() *TrendFollow { return &TrendFollow{} }
 
-func (s *TrendFollow) Name() string { return "trend_follow" }
+func (s *TrendFollow) Name() string            { return "trend_follow" }
+func (s *TrendFollow) UsesTrendWatcher() bool { return true }
 
 func (s *TrendFollow) Evaluate(states map[string]indicator.MarketState, currentPrice, pipSize float64) strategy.EntryResult {
 

@@ -55,26 +55,28 @@ func (b *Bot) watchPositions(ctx context.Context, ms indicator.MarketState) {
 			continue
 		}
 
-		n, signals := countReversalSignals(ms, pos, b.pipSize)
-		if n == 0 {
-			continue
-		}
+		if b.strat.UsesTrendWatcher() {
+			n, signals := countReversalSignals(ms, pos, b.pipSize)
+			if n == 0 {
+				continue
+			}
 
-		slog.Info("reversal signals detected")
+			slog.Info("reversal signals detected")
 
-		reason := strings.Join(signals, ",")
-		switch {
-		case n >= signalsToClose:
-			slog.Info("3+ signals confirmed — closing position",
-				"posID", pos.ProviderPositionID, "n", n,
-			)
-			b.closeTrackedPosition(ctx, pos, reason)
+			reason := strings.Join(signals, ",")
+			switch {
+			case n >= signalsToClose:
+				slog.Info("3+ signals confirmed — closing position",
+					"posID", pos.ProviderPositionID, "n", n,
+				)
+				b.closeTrackedPosition(ctx, pos, reason)
 
-		case n >= signalsToReduce && pos.Tier >= strategy.TierStronger:
-			slog.Info("2 signals — reducing high-tier position",
-				"posID", pos.ProviderPositionID, "tier", pos.Tier,
-			)
-			b.closeTrackedPosition(ctx, pos, reason)
+			case n >= signalsToReduce && pos.Tier >= strategy.TierStronger:
+				slog.Info("2 signals — reducing high-tier position",
+					"posID", pos.ProviderPositionID, "tier", pos.Tier,
+				)
+				b.closeTrackedPosition(ctx, pos, reason)
+			}
 		}
 	}
 }

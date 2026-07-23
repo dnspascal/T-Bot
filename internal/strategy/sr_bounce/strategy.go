@@ -32,7 +32,8 @@ func New(predictor *ml.Predictor, threshold float32, symbolID float32) *SRBounce
 	return &SRBounce{predictor: predictor, threshold: threshold, symbolID: symbolID}
 }
 
-func (s *SRBounce) Name() string { return "sr_bounce" }
+func (s *SRBounce) Name() string            { return "sr_bounce" }
+func (s *SRBounce) UsesTrendWatcher() bool { return false }
 
 func (s *SRBounce) Evaluate(states map[string]indicator.MarketState, currentPrice float64, pipSize float64) strategy.EntryResult {
 	hold := func(reason string) strategy.EntryResult {
