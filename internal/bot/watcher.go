@@ -7,8 +7,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/denismgaya/t-bot/internal/config"
 	"github.com/denismgaya/t-bot/internal/indicator"
-	"github.com/denismgaya/t-bot/internal/strategy"
 )
 
 const peakDrawbackThreshold = 60.0
@@ -55,7 +55,7 @@ func (b *Bot) watchPositions(ctx context.Context, ms indicator.MarketState) {
 			continue
 		}
 
-		if b.strat.UsesTrendWatcher() {
+		if b.usesTrendWatcher(pos.StrategyName) {
 			n, signals := countReversalSignals(ms, pos, b.pipSize)
 			if n == 0 {
 				continue
@@ -71,7 +71,7 @@ func (b *Bot) watchPositions(ctx context.Context, ms indicator.MarketState) {
 				)
 				b.closeTrackedPosition(ctx, pos, reason)
 
-			case n >= signalsToReduce && pos.Tier >= strategy.TierStronger:
+			case n >= signalsToReduce && pos.Tier >= config.TierStronger:
 				slog.Info("2 signals — reducing high-tier position",
 					"posID", pos.ProviderPositionID, "tier", pos.Tier,
 				)
@@ -79,6 +79,15 @@ func (b *Bot) watchPositions(ctx context.Context, ms indicator.MarketState) {
 			}
 		}
 	}
+}
+
+func (b *Bot) usesTrendWatcher(strategyName string) bool {
+	for _, s := range b.strategies {
+		if s.Name() == strategyName {
+			return s.UsesTrendWatcher()
+		}
+	}
+	return true // unknown strategy — safe default is to apply watcher
 }
 
 func countReversalSignals(ms indicator.MarketState, pos trackedPosition, pipSize float64) (int, []string) {

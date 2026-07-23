@@ -43,7 +43,7 @@ type Bot struct {
 	riskMgr      *risk.Manager
 	currentPrice provider.PriceEvent
 	registry     *PositionRegistry
-	strat        strat.Strategy
+	strategies   []strat.Strategy
 
 	symbol         string
 	symbolUUID     string
@@ -56,14 +56,15 @@ type Bot struct {
 	balance   float64
 	leverage  float64
 
-	pendingOrder       bool
-	pendingOrderID     string
-	pendingOrderSentAt time.Time
-	pendingSide        string
-	pendingTier        int
-	pendingSLPrice     float64
-	pendingTPPrice     float64
-	pendingATR         float64
+	pendingOrder         bool
+	pendingOrderID       string
+	pendingOrderSentAt   time.Time
+	pendingSide          string
+	pendingTier          int
+	pendingSLPrice       float64
+	pendingTPPrice       float64
+	pendingATR           float64
+	pendingStrategyName  string
 
 	lastCandleOpenTime int64
 	lastCandleClose    float64
@@ -105,7 +106,7 @@ type Bot struct {
 func New(
 	cfg *config.Config,
 	prov provider.Provider,
-	s strat.Strategy,
+	strategies []strat.Strategy,
 	sym string,
 	symbolUUID string,
 	providerAcctID string,
@@ -130,7 +131,7 @@ func New(
 	return &Bot{
 		cfg:                 cfg,
 		provider:            prov,
-		strat:               s,
+		strategies:          strategies,
 		symbol:              sym,
 		symbolUUID:          symbolUUID,
 		providerAcctID:      providerAcctID,
@@ -472,56 +473,59 @@ func (b *Bot) processClosedCandle(ctx context.Context, _ float64) {
 
 	b.watchPositions(ctx, m5)
 
-	evalStart := time.Now()
-	var result strat.EntryResult
-	if isEODWindow() {
-		result = strat.EntryResult{Signal: "HOLD", Reason: "EOD window — no new entries before dead session"}
-	} else {
-		result = b.strat.Evaluate(states, mid, b.pipSize)
-	}
-
-	if b.forceTestOrder && result.Signal == "HOLD" {
-		slog.Warn("FORCE_TEST_ORDER: overriding HOLD with BUY for pipeline test")
-		result = strat.EntryResult{
-			Signal:     "BUY",
-			Confluence: 1,
-			Tier:       strat.TierNormal,
-			SLPrice:    mid - m5.ATR*slATRMult,
-			TPPrice:    mid + m5.ATR*tpATRMult,
-			SLPips:     m5.ATR * slATRMult / b.pipSize,
-			TPPips:     m5.ATR * tpATRMult / b.pipSize,
-			ATR:        m5.ATR,
-		}
-		b.forceTestOrder = false
-	}
-
 	barTime := time.Unix(m5.BarTime, 0).UTC()
-	signalID, err := b.signals.Insert(ctx, signal.Signal{
-		SymbolID:            b.symbolUUID,
-		Provider:            b.provider.Name(),
-		Signal:              result.Signal,
-		Reason:              result.Reason,
-		Confluence:          result.Confluence,
-		Confidence:          result.Confidence,
-		ProcessingUS:        time.Since(evalStart).Microseconds(),
-		CheckedMarketStates: buildMarketStateSnapshots(states),
-		BarTime:             &barTime,
-		Strategy: func() string {
-			if result.StrategyName != "" {
-				return result.StrategyName
+	snapshots := buildMarketStateSnapshots(states)
+
+	for _, s := range b.strategies {
+		evalStart := time.Now()
+		var result strat.EntryResult
+		if isEODWindow() {
+			result = strat.EntryResult{Signal: config.SignalHold, Reason: "EOD window — no new entries before dead session"}
+		} else {
+			result = s.Evaluate(states, mid, b.pipSize)
+		}
+		if result.StrategyName == "" {
+			result.StrategyName = s.Name()
+		}
+
+		if b.forceTestOrder && result.Signal == config.SignalHold {
+			slog.Warn("FORCE_TEST_ORDER: overriding HOLD with BUY for pipeline test")
+			result = strat.EntryResult{
+				Signal:       config.SignalBuy,
+				StrategyName: s.Name(),
+				Confluence:   1,
+				Tier:         config.TierNormal,
+				SLPrice:      mid - m5.ATR*slATRMult,
+				TPPrice:      mid + m5.ATR*tpATRMult,
+				SLPips:       m5.ATR * slATRMult / b.pipSize,
+				TPPips:       m5.ATR * tpATRMult / b.pipSize,
+				ATR:          m5.ATR,
 			}
-			return b.strat.Name()
-		}(),
-	})
-	if err != nil {
-		slog.Error("insert signal failed", "err", err)
-	}
+			b.forceTestOrder = false
+		}
 
-	if result.Signal == "HOLD" {
-		return
-	}
+		signalID, err := b.signals.Insert(ctx, signal.Signal{
+			SymbolID:            b.symbolUUID,
+			Provider:            b.provider.Name(),
+			Signal:              result.Signal,
+			Reason:              result.Reason,
+			Confluence:          result.Confluence,
+			Confidence:          result.Confidence,
+			ProcessingUS:        time.Since(evalStart).Microseconds(),
+			CheckedMarketStates: snapshots,
+			BarTime:             &barTime,
+			Strategy:            result.StrategyName,
+		})
+		if err != nil {
+			slog.Error("insert signal failed", "strategy", s.Name(), "err", err)
+		}
 
-	b.onTradeSignal(ctx, result, b.currentPrice, signalID)
+		if result.Signal == config.SignalHold {
+			continue
+		}
+
+		b.onTradeSignal(ctx, result, b.currentPrice, signalID)
+	}
 }
 
 func (b *Bot) sameDirLosingPosition(side string) string {
@@ -785,6 +789,7 @@ func (b *Bot) onTradeSignal(ctx context.Context, result strat.EntryResult, price
 	b.pendingSLPrice = result.SLPrice
 	b.pendingTPPrice = result.TPPrice
 	b.pendingATR = result.ATR
+	b.pendingStrategyName = result.StrategyName
 
 	if b.provider.Name() == "binance" {
 		mid := price.Mid
@@ -801,6 +806,7 @@ func (b *Bot) onTradeSignal(ctx context.Context, result strat.EntryResult, price
 			TPPrice:            result.TPPrice,
 			ATR:                result.ATR,
 			OpenTime:           sentAt,
+			StrategyName:       result.StrategyName,
 		})
 		b.pendingOrder = false
 	}
@@ -870,6 +876,7 @@ func (b *Bot) recordOpenFill(ctx context.Context, exec provider.ExecutionEvent) 
 		TPPrice:            b.pendingTPPrice,
 		ATR:                b.pendingATR,
 		OpenTime:           deal.ExecTime,
+		StrategyName:       b.pendingStrategyName,
 	})
 
 	volume := deal.Volume
@@ -1162,10 +1169,6 @@ func (b *Bot) storeCandle(ctx context.Context, c provider.Candle) {
 
 func (b *Bot) onTick(ctx context.Context, price provider.PriceEvent) {
 	b.currentPrice = price
-
-	// Run peak drawback check on live price, not just M1 close.
-	// Gold can move 10+ points in a single minute, bypassing the threshold
-	// entirely if we only check at candle close.
 	if b.registry.Count() > 0 && time.Since(b.lastDrawbackCheck) >= 5*time.Second {
 		b.lastDrawbackCheck = time.Now()
 		mid := price.Mid
@@ -1358,7 +1361,7 @@ func (b *Bot) sendTestPosition(ctx context.Context) {
 	b.pendingOrderID = orderID
 	b.pendingOrderSentAt = sentAt
 	b.pendingSide = "BUY"
-	b.pendingTier = strat.TierNormal
+	b.pendingTier = config.TierNormal
 	b.pendingSLPrice = 0
 	b.pendingTPPrice = 0
 	b.pendingATR = 0
@@ -1371,7 +1374,7 @@ func (b *Bot) sendTestPosition(ctx context.Context) {
 		b.registry.Register(trackedPosition{
 			ProviderPositionID: orderID,
 			Side:               "BUY",
-			Tier:               strat.TierNormal,
+			Tier:               config.TierNormal,
 			Volume:             testVolume,
 			OpenPrice:          mid,
 			OpenTime:           sentAt,

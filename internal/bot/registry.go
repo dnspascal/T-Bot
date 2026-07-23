@@ -24,6 +24,7 @@ type trackedPosition struct {
 	OpenTime           time.Time
 	MaxFavorable       float64 // best price in trade direction (peak profit level)
 	MaxAdverse         float64 // worst price against trade direction (closest to SL)
+	StrategyName       string
 }
 
 type PositionRegistry struct {

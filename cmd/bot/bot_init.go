@@ -14,6 +14,7 @@ import (
 	"github.com/denismgaya/t-bot/internal/provider"
 	"github.com/denismgaya/t-bot/internal/risk"
 	"github.com/denismgaya/t-bot/internal/strategy"
+	"github.com/denismgaya/t-bot/internal/strategy/breakout"
 	combined "github.com/denismgaya/t-bot/internal/strategy/combined"
 	"github.com/denismgaya/t-bot/internal/strategy/regime"
 	srbounce "github.com/denismgaya/t-bot/internal/strategy/sr_bounce"
@@ -66,18 +67,22 @@ func initializeBot(ctx context.Context, cfg *config.Config, svc *Services, prov 
 		log.Fatal("get pip size:", err)
 	}
 
-	var lotUnit int64 = 100_000 // default: EURUSD micro lot in cTrader API units
+	var lotUnit int64 = 100_000
 	if prov.Name() == "ctrader" && symbol == "XAUUSD" {
-		lotUnit = 100 // gold micro lot in cTrader API units
+		lotUnit = 100
 	}
 
-	strat, err := buildStrategy(cfg.Strategy, symbol, cfg.MLModelDir, cfg.MLOnnxLib)
+	strategies, err := buildStrategies(cfg.Strategy, symbol, cfg.MLModelDir, cfg.MLOnnxLib)
 	if err != nil {
 		log.Fatal("build strategy:", err)
 	}
-	slog.Info("strategy loaded", "name", strat.Name(), "provider", prov.Name())
+	names := make([]string, len(strategies))
+	for i, s := range strategies {
+		names[i] = s.Name()
+	}
+	slog.Info("strategies loaded", "strategies", names, "provider", prov.Name())
 
-	tradingBot := bot.New(cfg, prov, strat, symbol, symbolUUID, authResult.AccountID, pipSize, lotUnit, svc.DB.Pool, riskMgr, balance, authResult.Leverage, svc.Lookup, svc.Repos.Ticks, svc.Repos.Candles, svc.Repos.Signals, svc.Repos.Orders, svc.Repos.Fills, svc.Repos.Positions, svc.Repos.PnLs, svc.Repos.Events, processorMgr, dispatcher)
+	tradingBot := bot.New(cfg, prov, strategies, symbol, symbolUUID, authResult.AccountID, pipSize, lotUnit, svc.DB.Pool, riskMgr, balance, authResult.Leverage, svc.Lookup, svc.Repos.Ticks, svc.Repos.Candles, svc.Repos.Signals, svc.Repos.Orders, svc.Repos.Fills, svc.Repos.Positions, svc.Repos.PnLs, svc.Repos.Events, processorMgr, dispatcher)
 
 	return &BotInitResult{
 		Bot:          tradingBot,
@@ -87,21 +92,29 @@ func initializeBot(ctx context.Context, cfg *config.Config, svc *Services, prov 
 	}
 }
 
-func buildStrategy(name, symbol, mlModelDir, mlOnnxLib string) (strategy.Strategy, error) {
+func buildStrategies(name, symbol, mlModelDir, mlOnnxLib string) ([]strategy.Strategy, error) {
 	newSRBounce := func() *srbounce.SRBounce {
 		return buildSRBounce(symbol, mlModelDir, mlOnnxLib)
 	}
 	switch name {
-	case "", "regime":
-		return regime.New(), nil
+	case "", "all":
+		return []strategy.Strategy{
+			newSRBounce(),
+			breakout.New(),
+			trendfollow.New(),
+		}, nil
+	case "regime":
+		return []strategy.Strategy{regime.New()}, nil
 	case "sr_bounce":
-		return newSRBounce(), nil
+		return []strategy.Strategy{newSRBounce()}, nil
 	case "trend_follow":
-		return trendfollow.New(), nil
+		return []strategy.Strategy{trendfollow.New()}, nil
+	case "breakout":
+		return []strategy.Strategy{breakout.New()}, nil
 	case "combined":
-		return combined.New(trendfollow.New(), newSRBounce()), nil
+		return []strategy.Strategy{combined.New(trendfollow.New(), newSRBounce())}, nil
 	default:
-		return nil, fmt.Errorf("unknown strategy %q — valid options: regime, sr_bounce", name)
+		return nil, fmt.Errorf("unknown strategy %q — valid options: all, regime, sr_bounce, trend_follow, breakout, combined", name)
 	}
 }
 
