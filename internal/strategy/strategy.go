@@ -1,25 +1,14 @@
 package strategy
 
-import "github.com/denismgaya/t-bot/internal/indicator"
-
-const (
-	TierNormal     = 0
-	TierStrong     = 1
-	TierStronger   = 2
-	TierVeryStrong = 3
+import (
+	"github.com/denismgaya/t-bot/internal/config"
+	"github.com/denismgaya/t-bot/internal/indicator"
 )
-
-const (
-	SignalBuy  = "BUY"
-	SignalSell = "SELL"
-	SignalHold = "HOLD"
-)
-
 
 type EntryResult struct {
 	Signal       string
 	Confluence   int
-	Confidence   float64 
+	Confidence   float64
 	Tier         int
 	SLPrice      float64
 	TPPrice      float64
@@ -41,12 +30,12 @@ type Strategy interface {
 func ConfluenceToTier(c int) int {
 	switch {
 	case c >= 6:
-		return TierVeryStrong
+		return config.TierVeryStrong
 	case c >= 5:
-		return TierStronger
+		return config.TierStronger
 	case c >= 4:
-		return TierStrong
+		return config.TierStrong
 	default:
-		return TierNormal
+		return config.TierNormal
 	}
 }

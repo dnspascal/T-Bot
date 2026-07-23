@@ -23,7 +23,7 @@ func (s *TrendFollow) UsesTrendWatcher() bool { return true }
 func (s *TrendFollow) Evaluate(states map[string]indicator.MarketState, currentPrice, pipSize float64) strategy.EntryResult {
 
 	hold := func(rsn string) strategy.EntryResult {
-		return strategy.EntryResult{Signal: strategy.SignalHold, Reason: rsn}
+		return strategy.EntryResult{Signal: config.SignalHold, Reason: rsn}
 	}
 
 	h1, ok := states[config.PeriodH1]
@@ -39,9 +39,9 @@ func (s *TrendFollow) Evaluate(states map[string]indicator.MarketState, currentP
 
 	switch h1.Regime {
 	case config.TrendingUp:
-		dir = strategy.SignalBuy
+		dir = config.SignalBuy
 	case config.TrendingDown:
-		dir = strategy.SignalSell
+		dir = config.SignalSell
 	default:
 		return hold("H1 regime unclear")
 	}
@@ -51,11 +51,11 @@ func (s *TrendFollow) Evaluate(states map[string]indicator.MarketState, currentP
 		return hold("M5 not warmed up")
 	}
 
-	if dir == strategy.SignalBuy && m5.EMAFast > m5.EMASlow {
+	if dir == config.SignalBuy && m5.EMAFast > m5.EMASlow {
 		return hold("no pullback - price still above fast EMA")
 	}
 
-	if dir == strategy.SignalSell && m5.EMAFast < m5.EMASlow {
+	if dir == config.SignalSell && m5.EMAFast < m5.EMASlow {
 		return hold("no pullback - price still below fast EMA")
 	}
 
@@ -66,7 +66,7 @@ func (s *TrendFollow) Evaluate(states map[string]indicator.MarketState, currentP
 
 	atr := m15.ATR
 	var slPrice, tpPrice float64
-	if dir == strategy.SignalBuy {
+	if dir == config.SignalBuy {
 		slPrice = currentPrice - slATRMult*atr
 		tpPrice = currentPrice + tpATRMult*atr
 	} else {
@@ -80,7 +80,7 @@ func (s *TrendFollow) Evaluate(states map[string]indicator.MarketState, currentP
 	return strategy.EntryResult{
 		Signal:     dir,
 		Confluence: 1,
-		Tier:       strategy.TierNormal,
+		Tier:       config.TierNormal,
 		SLPrice:    slPrice,
 		TPPrice:    tpPrice,
 		SLPips:     slPips,

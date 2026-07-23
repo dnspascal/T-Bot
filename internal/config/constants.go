@@ -54,3 +54,11 @@ const (
 	MomentumFalling = "falling"
 	MomentumStable  = "stable"
 )
+
+const (
+	TierNormal     = 0
+	TierStrong     = 1
+	TierStronger   = 2
+	TierVeryStrong = 3
+)
+
