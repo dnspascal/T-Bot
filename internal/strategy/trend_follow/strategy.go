@@ -3,6 +3,7 @@ package trendfollow
 import (
 	"math"
 
+	"github.com/denismgaya/t-bot/internal/config"
 	"github.com/denismgaya/t-bot/internal/indicator"
 	"github.com/denismgaya/t-bot/internal/strategy"
 )
@@ -16,7 +17,8 @@ const (
 
 func New() *TrendFollow { return &TrendFollow{} }
 
-func (s *TrendFollow) Name() string { return "trend_follow" }
+func (s *TrendFollow) Name() string           { return "trend_follow" }
+func (s *TrendFollow) UsesTrendWatcher() bool { return true }
 
 func (s *TrendFollow) Evaluate(states map[string]indicator.MarketState, currentPrice, pipSize float64) strategy.EntryResult {
 
@@ -24,27 +26,27 @@ func (s *TrendFollow) Evaluate(states map[string]indicator.MarketState, currentP
 		return strategy.EntryResult{Signal: strategy.SignalHold, Reason: rsn}
 	}
 
-	h1, ok := states["H1"]
+	h1, ok := states[config.PeriodH1]
 	if !ok || !h1.IsWarmedUp {
 		return hold("H1 not warmed up")
 	}
 
-	if h1.Regime == indicator.Ranging {
+	if h1.Regime == config.Ranging {
 		return hold("H1 regime is ranging -- sr_bounce handles this")
 	}
 
 	var dir string
 
 	switch h1.Regime {
-	case indicator.TrendingUp:
+	case config.TrendingUp:
 		dir = strategy.SignalBuy
-	case indicator.TrendingDown:
+	case config.TrendingDown:
 		dir = strategy.SignalSell
 	default:
 		return hold("H1 regime unclear")
 	}
 
-	m5, ok := states["M5"]
+	m5, ok := states[config.PeriodM5]
 	if !ok || !m5.IsWarmedUp {
 		return hold("M5 not warmed up")
 	}
@@ -57,7 +59,7 @@ func (s *TrendFollow) Evaluate(states map[string]indicator.MarketState, currentP
 		return hold("no pullback - price still below fast EMA")
 	}
 
-	m15, ok := states["M15"]
+	m15, ok := states[config.PeriodM15]
 	if !ok || !m15.IsWarmedUp || m15.ATR <= 0 {
 		return hold("M15 ATR not ready")
 	}

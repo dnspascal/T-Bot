@@ -14,6 +14,15 @@ func New(strategies ...strategy.Strategy) *CombinedStrategy {
 }
 func (c *CombinedStrategy) Name() string { return "combined" }
 
+func (c *CombinedStrategy) UsesTrendWatcher() bool {
+	for _, s := range c.strategies {
+		if !s.UsesTrendWatcher() {
+			return false
+		}
+	}
+	return true
+}
+
 func (c *CombinedStrategy) Evaluate(states map[string]indicator.MarketState, currentPrice, pipSize float64) strategy.EntryResult {
 
 	for _, s := range c.strategies {
