@@ -16,7 +16,7 @@ const (
 	liveHost = "live.ctraderapi.com:5035"
 
 	heartbeatInterval = 10 * time.Second
-	readTimeout       = 30 * time.Second
+	readTimeout       = 90 * time.Second
 )
 
 type MessageHandler func(payloadType uint32, payload []byte)

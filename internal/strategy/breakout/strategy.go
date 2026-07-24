@@ -9,16 +9,17 @@ import (
 )
 
 const (
-	slATRMult = 0.5
+	slATRMult = 1.0 
 	tpATRMult = 1.5
 )
 
-type Breakout struct{}
+type Breakout struct {
+	lastBreakoutBarTime int64 
+}
 
 func New() *Breakout { return &Breakout{} }
 
-func (s *Breakout) Name() string { return "breakout" }
-
+func (s *Breakout) Name() string           { return "breakout" }
 func (s *Breakout) UsesTrendWatcher() bool { return true }
 
 func (s *Breakout) Evaluate(states map[string]indicator.MarketState, currentPrice, pipSize float64) strategy.EntryResult {
@@ -40,23 +41,29 @@ func (s *Breakout) Evaluate(states map[string]indicator.MarketState, currentPric
 	}
 
 	if m15.ADX > 35 {
-		return hold("ADX too high - market was already trending, not a range breakout")
+		return hold("ADX too high — market already trending, not a range breakout")
+	}
+
+	if m15.BarTime == s.lastBreakoutBarTime {
+		return hold("breakout already signaled this M15 bar")
 	}
 
 	var dir string
-	if currentPrice > m15.BreakoutLevel {
+	switch {
+	case m15.Close > m15.BreakoutLevel:
 		dir = config.SignalBuy
-	} else {
+	case m15.Close < m15.BreakoutLevel:
 		dir = config.SignalSell
+	default:
+		return hold("M15 closed exactly at breakout level")
 	}
 
 	if h1, ok := states[config.PeriodH1]; ok && h1.IsWarmedUp {
 		if dir == config.SignalBuy && h1.EMA50 > 0 && currentPrice < h1.EMA50 {
-			return hold("BUY breakout blocked -- price below H1 EMA50")
+			return hold("BUY breakout blocked — price below H1 EMA50")
 		}
-
 		if dir == config.SignalSell && h1.EMA50 > 0 && currentPrice > h1.EMA50 {
-			return hold("SELL breakout blocked -- price above H1 EMA50")
+			return hold("SELL breakout blocked — price above H1 EMA50")
 		}
 	}
 
@@ -77,6 +84,8 @@ func (s *Breakout) Evaluate(states map[string]indicator.MarketState, currentPric
 	if slPips < 3 || tpPips < 3 {
 		return hold("SL/TP too tight")
 	}
+
+	s.lastBreakoutBarTime = m15.BarTime
 
 	return strategy.EntryResult{
 		Signal:  dir,
